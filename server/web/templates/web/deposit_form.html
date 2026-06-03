@@ -1,0 +1,83 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Nouveau dépôt{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-12 col-lg-7">
+    <h1 class="h3 mb-3"><i class="bi bi-arrow-down-circle text-success"></i> Nouveau dépôt</h1>
+    <p class="text-muted">
+      Le dépôt sera enregistré côté serveur et synchronisé vers les postes à la prochaine sync.
+      Seuls les dépôts sont autorisés en ligne ; retraits et ventes restent réservés au poste
+      pour éviter tout risque de double-débit.
+    </p>
+
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+    {% if messages %}
+      {% for m in messages %}<div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>{% endfor %}
+    {% endif %}
+
+    <form method="post" class="card p-4 shadow-sm">
+      {% csrf_token %}
+
+      <div class="mb-3">
+        <label class="form-label">Matricule du client <span class="text-danger">*</span></label>
+        <input type="text" name="matricule" class="form-control" required autofocus placeholder="MAT-001">
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">Téléphone</label>
+        <input type="text" name="telephone" class="form-control" placeholder="+224 …">
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">Montant (GNF) <span class="text-danger">*</span></label>
+        <input type="number" step="1" min="1" name="montant" class="form-control form-control-lg" required>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">Note</label>
+        <input type="text" name="note" class="form-control" placeholder="Optionnel">
+      </div>
+
+      <div class="text-muted small mb-3">
+        Enregistré par : <strong>{{ remote.nom_complet|default:remote.identifiant }}</strong>
+        ({{ remote.role }})
+      </div>
+
+      <button type="submit" class="btn btn-success btn-lg">
+        <i class="bi bi-check-lg"></i> Valider le dépôt
+      </button>
+    </form>
+  </div>
+
+  <div class="col-12 col-lg-5">
+    <h2 class="h5 mb-3">Dernier dépôt enregistré</h2>
+    {% if last_receipt %}
+      <div class="card p-4 shadow-sm border-success">
+        <div class="text-center border-bottom border-2 border-dashed pb-2 mb-3" style="border-style:dashed!important;">
+          <div class="fw-bold">REÇU DÉPÔT</div>
+          <small class="text-muted">N° {{ last_receipt.id }} — {{ last_receipt.created_at }}</small>
+        </div>
+        <div class="text-center my-2">
+          <div class="display-6 text-success fw-bold">{{ last_receipt.montant|money }}</div>
+        </div>
+        <table class="table table-sm">
+          <tr><th>Matricule</th><td>{{ last_receipt.matricule }}</td></tr>
+          <tr><th>Téléphone</th><td>{{ last_receipt.telephone|default:"—" }}</td></tr>
+          <tr><th>Nouveau solde</th><td><strong>{{ last_receipt.solde_apres|money }}</strong></td></tr>
+          <tr><th>Agent</th><td>{{ last_receipt.agent_nom }}</td></tr>
+        </table>
+        <button onclick="window.print()" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-printer"></i> Imprimer
+        </button>
+      </div>
+    {% else %}
+      <div class="card p-4 text-center text-muted">
+        <i class="bi bi-receipt" style="font-size:2rem;"></i>
+        <p class="mb-0 mt-2">Le reçu apparaîtra ici après validation.</p>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

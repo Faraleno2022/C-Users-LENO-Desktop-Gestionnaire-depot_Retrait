@@ -1,0 +1,85 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Dépôts / Retraits{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center mb-3">
+  <h1 class="h3 me-3 mb-0">Dépôts / Retraits</h1>
+  <span class="text-muted">{{ n_total|num }} opérations · dépôts {{ total_depots|money }} · retraits {{ total_retraits|money }}</span>
+</div>
+
+<form method="get" class="filter-card mb-3">
+  <div class="row g-2">
+    <div class="col-sm-6 col-md-3">
+      <label class="form-label small">Matricule</label>
+      <input type="text" name="matricule" value="{{ filters.matricule }}" class="form-control form-control-sm" placeholder="MAT-…">
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Type</label>
+      <select name="type" class="form-select form-select-sm">
+        <option value="">Tous</option>
+        <option value="depot" {% if filters.type == "depot" %}selected{% endif %}>Dépôts</option>
+        <option value="retrait" {% if filters.type == "retrait" %}selected{% endif %}>Retraits</option>
+      </select>
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Du</label>
+      <input type="date" name="date_from" value="{{ filters.date_from }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Au</label>
+      <input type="date" name="date_to" value="{{ filters.date_to }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Agent</label>
+      <input type="text" name="agent" value="{{ filters.agent }}" class="form-control form-control-sm" placeholder="Nom…">
+    </div>
+    <div class="col-md-1 d-flex align-items-end">
+      <button class="btn btn-primary btn-sm w-100">Filtrer</button>
+    </div>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Matricule</th>
+          <th>Téléphone</th>
+          <th>Type</th>
+          <th class="text-end">Montant</th>
+          <th class="text-end">Solde après</th>
+          <th>Agent</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for tx in page_obj %}
+          <tr>
+            <td>{{ tx.created_at }}</td>
+            <td>{{ tx.matricule }}</td>
+            <td>{{ tx.telephone|default:"—" }}</td>
+            <td>
+              {% if tx.type == "depot" %}
+                <span class="badge badge-depot">Dépôt</span>
+              {% else %}
+                <span class="badge badge-retrait">Retrait</span>
+              {% endif %}
+            </td>
+            <td class="text-end">{{ tx.montant|money }}</td>
+            <td class="text-end">{{ tx.solde_apres|money }}</td>
+            <td>{{ tx.agent_nom }}</td>
+            <td>{{ tx.note|default:"—" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="8" class="text-center text-muted py-4">Aucune transaction ne correspond aux filtres.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include "web/_pagination.html" %}
+{% endblock %}

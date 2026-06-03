@@ -1,0 +1,112 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Rapports{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-3"><i class="bi bi-file-earmark-bar-graph"></i> Rapports</h1>
+
+{% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-4">
+    <div class="card stat-card p-3 h-100">
+      <div class="label">Aujourd'hui</div>
+      <div>Dépôts : <strong>{{ stats.today_depots|money }}</strong></div>
+      <div>Retraits : <strong>{{ stats.today_retraits|money }}</strong></div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card stat-card stat-info p-3 h-100">
+      <div class="label">Ce mois</div>
+      <div>Dépôts : <strong>{{ stats.month_depots|money }}</strong></div>
+      <div>Retraits : <strong>{{ stats.month_retraits|money }}</strong></div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card stat-card stat-teal p-3 h-100">
+      <div class="label">Cette année</div>
+      <div>Dépôts : <strong>{{ stats.year_depots|money }}</strong></div>
+      <div>Retraits : <strong>{{ stats.year_retraits|money }}</strong></div>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-12 col-lg-8">
+    <h2 class="h5 mb-3">Générer un rapport</h2>
+    <form method="post" class="card p-4 shadow-sm">
+      {% csrf_token %}
+
+      <div class="row g-3">
+        <div class="col-sm-6">
+          <label class="form-label">Données</label>
+          <select name="dataset" class="form-select" id="dataset">
+            <option value="transactions">Dépôts / Retraits</option>
+            <option value="sales">Ventes</option>
+            <option value="stock">État du stock</option>
+          </select>
+        </div>
+        <div class="col-sm-6">
+          <label class="form-label">Type</label>
+          <select name="kind" class="form-select" id="kind">
+            <option value="daily">Journalier (aujourd'hui)</option>
+            <option value="monthly" selected>Mensuel (mois courant)</option>
+            <option value="annual">Annuel (année courante)</option>
+            <option value="custom">Personnalisé (dates choisies)</option>
+          </select>
+        </div>
+
+        <div class="col-sm-6 period-field">
+          <label class="form-label">Date de début</label>
+          <input type="date" name="date_from" value="{{ default_from }}" class="form-control">
+        </div>
+        <div class="col-sm-6 period-field">
+          <label class="form-label">Date de fin</label>
+          <input type="date" name="date_to" value="{{ default_to }}" class="form-control">
+        </div>
+
+        <div class="col-sm-6">
+          <label class="form-label">Agent (filtre par nom)</label>
+          <input type="text" name="agent" class="form-control" placeholder="Optionnel">
+        </div>
+        <div class="col-sm-6">
+          <label class="form-label">Format</label>
+          <select name="format" class="form-select">
+            <option value="pdf">PDF</option>
+            <option value="xlsx">Excel (.xlsx)</option>
+          </select>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-success btn-lg mt-4">
+        <i class="bi bi-download"></i> Générer & Télécharger
+      </button>
+    </form>
+  </div>
+
+  <div class="col-12 col-lg-4">
+    <h2 class="h5 mb-3">Astuces</h2>
+    <ul class="text-muted small">
+      <li>Le rapport est généré depuis les données <strong>synchronisées</strong> reçues du poste.</li>
+      <li>L'état du stock ignore la période (il prend la photo actuelle).</li>
+      <li>Le filtre Agent fait une recherche par contenu de nom (insensible à la casse).</li>
+      <li>Les rapports PDF passent en orientation paysage si plus de 6 colonnes.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  // Active/désactive les champs de dates selon le type
+  function refreshPeriodFields() {
+    var kind = document.getElementById('kind').value;
+    var dataset = document.getElementById('dataset').value;
+    var disable = (dataset === 'stock') || ['daily', 'monthly', 'annual'].includes(kind);
+    document.querySelectorAll('.period-field input').forEach(function (i) {
+      i.disabled = disable;
+    });
+  }
+  document.getElementById('kind').addEventListener('change', refreshPeriodFields);
+  document.getElementById('dataset').addEventListener('change', refreshPeriodFields);
+  refreshPeriodFields();
+</script>
+{% endblock %}

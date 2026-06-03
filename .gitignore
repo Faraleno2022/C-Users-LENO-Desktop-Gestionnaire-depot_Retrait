@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtualenvs
+.venv/
+venv/
+env/
+server/.venv/
+
+# IDE
+.idea/
+.vscode/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local data & logs
+*.log
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/backups/
+exports/
+logs/
+
+# Django
+server/dev.sqlite3
+server/dev.sqlite3-journal
+server/staticfiles/
+server/.env
+server/*.log
+
+# Build artefacts
+build/
+dist/
+*.egg-info/
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+htmlcov/

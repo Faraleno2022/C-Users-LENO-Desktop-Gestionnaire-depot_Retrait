@@ -1,0 +1,100 @@
+{% extends "web/base.html" %}
+{% block title %}Utilisateurs{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center mb-3">
+  <h1 class="h3 me-auto mb-2">Utilisateurs</h1>
+  <a href="{% url 'web:user_new' %}" class="btn btn-success">
+    <i class="bi bi-person-plus"></i> Nouvel utilisateur
+  </a>
+</div>
+
+{% if messages %}
+  {% for m in messages %}<div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>{% endfor %}
+{% endif %}
+
+<form method="get" class="filter-card mb-3">
+  <div class="row g-2">
+    <div class="col-sm-6 col-md-6">
+      <input type="text" name="q" value="{{ search }}" class="form-control form-control-sm" placeholder="Rechercher (identifiant, nom, matricule)…">
+    </div>
+    <div class="col-sm-4 col-md-4">
+      <select name="role" class="form-select form-select-sm">
+        <option value="">Tous les rôles</option>
+        {% for k, label in role_labels.items %}
+          <option value="{{ k }}" {% if role_filter == k %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-sm-2 col-md-2">
+      <button class="btn btn-primary btn-sm w-100">Filtrer</button>
+    </div>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Identifiant</th>
+          <th>Nom complet</th>
+          <th>Matricule</th>
+          <th>Téléphone</th>
+          <th>Rôle</th>
+          <th>Statut</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+          <tr>
+            <td><strong>{{ u.identifiant }}</strong></td>
+            <td>{{ u.nom_complet }}</td>
+            <td>{{ u.matricule|default:"—" }}</td>
+            <td>{{ u.telephone|default:"—" }}</td>
+            <td>
+              {% if u.role == "super_admin" %}
+                <span class="badge bg-danger">{{ role_labels.super_admin }}</span>
+              {% elif u.role == "admin" %}
+                <span class="badge bg-warning text-dark">{{ role_labels.admin }}</span>
+              {% elif u.role == "superviseur" %}
+                <span class="badge bg-info text-dark">{{ role_labels.superviseur }}</span>
+              {% else %}
+                <span class="badge bg-secondary">{{ role_labels.caissier }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if u.actif %}
+                <span class="badge bg-success">Actif</span>
+              {% else %}
+                <span class="badge bg-secondary">Désactivé</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              {% if is_super or u.role == "superviseur" or u.role == "caissier" %}
+                <a href="{% url 'web:user_edit' u.pk %}" class="btn btn-sm btn-outline-primary">
+                  <i class="bi bi-pencil"></i>
+                </a>
+                {% if u.identifiant != remote.identifiant %}
+                  <form method="post" action="{% url 'web:user_toggle' u.pk %}" class="d-inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-outline-{% if u.actif %}danger{% else %}success{% endif %}"
+                            title="{% if u.actif %}Désactiver{% else %}Activer{% endif %}">
+                      <i class="bi bi-{% if u.actif %}slash-circle{% else %}check-circle{% endif %}"></i>
+                    </button>
+                  </form>
+                {% endif %}
+              {% else %}
+                <span class="text-muted small">—</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="7" class="text-center text-muted py-4">Aucun utilisateur ne correspond aux filtres.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

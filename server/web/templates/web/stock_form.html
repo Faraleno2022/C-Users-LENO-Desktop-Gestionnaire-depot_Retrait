@@ -1,0 +1,65 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Ajustement de stock{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6">
+    <h1 class="h3 mb-3"><i class="bi bi-box-seam"></i> Ajustement de stock</h1>
+    <div class="card mb-3 p-3">
+      <strong>{{ product.nom }}</strong>
+      {% if product.reference %}<span class="text-muted">({{ product.reference }})</span>{% endif %}
+      <div class="mt-1">Stock actuel : <strong>{{ product.quantite_stock|num }}</strong> ·
+        Seuil : {{ product.seuil_alerte|num }}</div>
+    </div>
+
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+
+    <div class="alert alert-warning small">
+      <i class="bi bi-exclamation-triangle"></i>
+      Si le poste a effectué des ventes hors-ligne sur ce produit, le stock affiché
+      ne les reflète pas tant que la sync n'a pas eu lieu. La quantité finale
+      converge à la prochaine synchronisation.
+    </div>
+
+    <form method="post" class="card p-4 shadow-sm">
+      {% csrf_token %}
+
+      <div class="mb-3">
+        <label class="form-label">Type de mouvement <span class="text-danger">*</span></label>
+        <div class="d-flex gap-3">
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="type" id="t_in" value="entree" checked>
+            <label class="form-check-label text-success" for="t_in">
+              <i class="bi bi-box-arrow-in-down"></i> Entrée (réapprovisionnement)
+            </label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="type" id="t_out" value="sortie">
+            <label class="form-check-label text-danger" for="t_out">
+              <i class="bi bi-box-arrow-up"></i> Sortie (ajustement / perte / casse)
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">Quantité <span class="text-danger">*</span></label>
+        <input type="number" step="1" min="1" name="quantite" class="form-control form-control-lg" required autofocus>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">Motif</label>
+        <input type="text" name="motif" class="form-control" placeholder="ex : Livraison fournisseur · Casse · Inventaire">
+      </div>
+
+      <div class="d-flex gap-2 mt-2">
+        <button type="submit" class="btn btn-success">
+          <i class="bi bi-check-lg"></i> Enregistrer le mouvement
+        </button>
+        <a href="{% url 'web:products' %}" class="btn btn-secondary">Annuler</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

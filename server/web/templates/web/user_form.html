@@ -1,0 +1,68 @@
+{% extends "web/base.html" %}
+{% block title %}{% if target_user %}Modifier utilisateur{% else %}Nouvel utilisateur{% endif %}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6">
+    <h1 class="h3 mb-3">{% if target_user %}Modifier l'utilisateur{% else %}Nouvel utilisateur{% endif %}</h1>
+
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+
+    <form method="post" class="card p-4 shadow-sm">
+      {% csrf_token %}
+
+      <div class="mb-3">
+        <label class="form-label">Identifiant <span class="text-danger">*</span></label>
+        <input type="text" name="identifiant" class="form-control" required
+               value="{{ target_user.identifiant|default:'' }}"
+               autocomplete="off">
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">Nom complet <span class="text-danger">*</span></label>
+        <input type="text" name="nom_complet" class="form-control" required
+               value="{{ target_user.nom_complet|default:'' }}">
+      </div>
+
+      <div class="row g-2">
+        <div class="col-sm-6 mb-3">
+          <label class="form-label">Matricule</label>
+          <input type="text" name="matricule" class="form-control"
+                 value="{{ target_user.matricule|default:'' }}">
+        </div>
+        <div class="col-sm-6 mb-3">
+          <label class="form-label">Téléphone</label>
+          <input type="text" name="telephone" class="form-control"
+                 value="{{ target_user.telephone|default:'' }}">
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">Rôle <span class="text-danger">*</span></label>
+        <select name="role" class="form-select" required>
+          {% for k, label in allowed_roles %}
+            <option value="{{ k }}" {% if target_user.role == k %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">
+          Mot de passe {% if not target_user %}<span class="text-danger">*</span>{% else %}<small class="text-muted">(laisser vide pour ne pas changer)</small>{% endif %}
+        </label>
+        <input type="password" name="password" class="form-control"
+               {% if not target_user %}required{% endif %}
+               autocomplete="new-password">
+        <small class="text-muted">Le hash bcrypt sera propagé au poste lors de la prochaine synchronisation.</small>
+      </div>
+
+      <div class="d-flex gap-2 mt-2">
+        <button type="submit" class="btn btn-success">
+          <i class="bi bi-check-lg"></i> Enregistrer
+        </button>
+        <a href="{% url 'web:users' %}" class="btn btn-secondary">Annuler</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

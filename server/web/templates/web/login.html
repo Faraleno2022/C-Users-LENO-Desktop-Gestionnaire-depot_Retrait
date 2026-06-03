@@ -1,0 +1,36 @@
+{% extends "web/base.html" %}
+{% block title %}Connexion{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-6 col-lg-4">
+    <div class="card shadow-sm mt-5">
+      <div class="card-body p-4">
+        <h3 class="text-center mb-1">Console web</h3>
+        <p class="text-center text-muted mb-4">Connectez-vous avec vos identifiants poste</p>
+
+        {% if error %}
+          <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+
+        <form method="post">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label">Identifiant</label>
+            <input type="text" name="identifiant" class="form-control" autofocus required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Mot de passe</label>
+            <input type="password" name="password" class="form-control" required>
+          </div>
+          <button type="submit" class="btn btn-primary w-100">Se connecter</button>
+        </form>
+
+        <p class="text-muted text-center mt-3 mb-0" style="font-size:.85rem;">
+          Les comptes sont créés depuis le poste et synchronisés.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

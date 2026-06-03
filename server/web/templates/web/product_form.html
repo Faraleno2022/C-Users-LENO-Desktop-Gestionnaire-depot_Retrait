@@ -1,0 +1,68 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}{% if product %}Modifier{% else %}Nouveau produit{% endif %}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6">
+    <h1 class="h3 mb-3">{% if product %}Modifier le produit{% else %}Nouveau produit{% endif %}</h1>
+
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+
+    <form method="post" class="card p-4 shadow-sm">
+      {% csrf_token %}
+      <div class="mb-3">
+        <label class="form-label">Nom <span class="text-danger">*</span></label>
+        <input type="text" name="nom" class="form-control" required
+               value="{{ product.nom|default:'' }}">
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Référence</label>
+        <input type="text" name="reference" class="form-control"
+               value="{{ product.reference|default:'' }}">
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Description</label>
+        <textarea name="description" class="form-control" rows="2">{{ product.description|default:'' }}</textarea>
+      </div>
+      <div class="row g-2">
+        <div class="col-sm-6 mb-3">
+          <label class="form-label">Prix unitaire (GNF) <span class="text-danger">*</span></label>
+          <input type="number" step="1" min="0" name="prix_unitaire" class="form-control" required
+                 value="{{ product.prix_unitaire|default:0|stringformat:'.0f' }}">
+        </div>
+        <div class="col-sm-6 mb-3">
+          <label class="form-label">Seuil d'alerte stock</label>
+          <input type="number" step="1" min="0" name="seuil_alerte" class="form-control"
+                 value="{{ product.seuil_alerte|default:0|stringformat:'.0f' }}">
+        </div>
+      </div>
+
+      {% if not product %}
+      <div class="mb-3">
+        <label class="form-label">Quantité initiale</label>
+        <input type="number" step="1" min="0" name="quantite_stock" class="form-control" value="0">
+        <small class="text-muted">Les ajustements de stock ultérieurs se font depuis le poste.</small>
+      </div>
+      {% else %}
+      <div class="form-check mb-3">
+        <input type="checkbox" class="form-check-input" name="actif" id="actif"
+               {% if product.actif %}checked{% endif %}>
+        <label class="form-check-label" for="actif">Produit actif</label>
+      </div>
+      <div class="mb-3 text-muted">
+        Stock actuel : <strong>{{ product.quantite_stock|num }}</strong>
+        (modifiable uniquement depuis le poste)
+      </div>
+      {% endif %}
+
+      <div class="d-flex gap-2 mt-2">
+        <button type="submit" class="btn btn-success">
+          <i class="bi bi-check-lg"></i> Enregistrer
+        </button>
+        <a href="{% url 'web:products' %}" class="btn btn-secondary">Annuler</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,90 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Journal d'audit{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center mb-3">
+  <h1 class="h3 me-3 mb-0"><i class="bi bi-journal-text"></i> Journal d'audit</h1>
+  <span class="text-muted">{{ n_total|num }} entrée{{ n_total|pluralize }}</span>
+</div>
+
+<form method="get" class="filter-card mb-3">
+  <div class="row g-2">
+    <div class="col-sm-6 col-md-3">
+      <label class="form-label small">Utilisateur</label>
+      <input type="text" name="user" value="{{ filters.user }}" class="form-control form-control-sm" placeholder="identifiant…">
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Action</label>
+      <input type="text" name="action" value="{{ filters.action }}" class="form-control form-control-sm" placeholder="create, update…">
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Cible</label>
+      <input type="text" name="target" value="{{ filters.target }}" class="form-control form-control-sm" placeholder="product, MAT-…">
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Source</label>
+      <select name="source" class="form-select form-select-sm">
+        <option value="">Toutes</option>
+        <option value="web" {% if filters.source == "web" %}selected{% endif %}>Web</option>
+        <option value="poste" {% if filters.source == "poste" %}selected{% endif %}>Poste</option>
+      </select>
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Du</label>
+      <input type="date" name="date_from" value="{{ filters.date_from }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Au</label>
+      <input type="date" name="date_to" value="{{ filters.date_to }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-12 d-flex justify-content-end">
+      <button class="btn btn-primary btn-sm">Filtrer</button>
+    </div>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover table-sm mb-0">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Source</th>
+          <th>Utilisateur</th>
+          <th>Action</th>
+          <th>Cible</th>
+          <th>Détails</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in page_obj %}
+          <tr>
+            <td><small>{{ a.created_at }}</small></td>
+            <td>
+              {% if a.action|slice:":4" == "web." %}
+                <span class="badge bg-info text-dark">Web</span>
+              {% else %}
+                <span class="badge bg-secondary">Poste</span>
+              {% endif %}
+            </td>
+            <td>{{ a.user_identifiant|default:"—" }}</td>
+            <td><code>{{ a.action }}</code></td>
+            <td>
+              {% if a.target_type %}
+                <span class="text-muted">{{ a.target_type }}</span>:
+                <strong>{{ a.target_id|default:"—" }}</strong>
+              {% else %}—{% endif %}
+            </td>
+            <td><small>{{ a.details|default:"—" }}</small></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-4">Aucune entrée ne correspond aux filtres.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include "web/_pagination.html" %}
+{% endblock %}

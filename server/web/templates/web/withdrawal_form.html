@@ -1,0 +1,108 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Nouveau retrait{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-12 col-lg-7">
+    <h1 class="h3 mb-3"><i class="bi bi-arrow-up-circle text-danger"></i> Nouveau retrait</h1>
+
+    <div class="alert alert-warning border-warning border-2">
+      <strong><i class="bi bi-exclamation-triangle"></i> Avertissement risque double-débit</strong>
+      <p class="mb-1">Le solde affiché provient du <strong>serveur uniquement</strong>. Si le poste de
+      caisse a effectué des opérations <em>hors-ligne</em> sur ce matricule (qu'il n'a pas
+      encore poussées), elles ne sont pas visibles ici.</p>
+      <p class="mb-0">Le retrait pourrait donc rendre le solde réel négatif. Vérifiez le solde
+      <strong>au poste</strong> et synchronisez avant de continuer.</p>
+    </div>
+
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+    {% if messages %}
+      {% for m in messages %}<div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>{% endfor %}
+    {% endif %}
+
+    <form method="get" class="mb-3">
+      <div class="input-group">
+        <input type="text" name="matricule" value="{{ matricule_preview }}" class="form-control" placeholder="MAT-001">
+        <button class="btn btn-outline-primary" type="submit">
+          <i class="bi bi-search"></i> Vérifier le solde
+        </button>
+      </div>
+    </form>
+
+    {% if matricule_preview %}
+      <div class="card p-3 mb-3 bg-light">
+        Solde serveur de <strong>{{ matricule_preview }}</strong> :
+        <strong class="{% if balance_preview < 0 %}text-danger{% else %}text-success{% endif %}">
+          {{ balance_preview|money }}
+        </strong>
+      </div>
+    {% endif %}
+
+    <form method="post" class="card p-4 shadow-sm">
+      {% csrf_token %}
+
+      <div class="mb-3">
+        <label class="form-label">Matricule <span class="text-danger">*</span></label>
+        <input type="text" name="matricule" value="{{ matricule_preview }}" class="form-control" required>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">Téléphone</label>
+        <input type="text" name="telephone" class="form-control">
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">Montant (GNF) <span class="text-danger">*</span></label>
+        <input type="number" step="1" min="1" name="montant" class="form-control form-control-lg" required>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">Note</label>
+        <input type="text" name="note" class="form-control">
+      </div>
+
+      <div class="form-check mb-3">
+        <input type="checkbox" class="form-check-input" name="confirmed" value="1" id="confirmed" required>
+        <label class="form-check-label" for="confirmed">
+          <strong>Je confirme avoir vérifié le solde réel avec le poste</strong> et accepte
+          le risque de réconciliation.
+        </label>
+      </div>
+
+      <button type="submit" class="btn btn-danger btn-lg">
+        <i class="bi bi-arrow-up-circle"></i> Valider le retrait
+      </button>
+    </form>
+  </div>
+
+  <div class="col-12 col-lg-5">
+    <h2 class="h5 mb-3">Dernier retrait enregistré</h2>
+    {% if last_receipt %}
+      <div class="card p-4 shadow-sm border-danger">
+        <div class="text-center border-bottom pb-2 mb-3" style="border-style:dashed!important;">
+          <div class="fw-bold">REÇU RETRAIT</div>
+          <small class="text-muted">N° {{ last_receipt.id }} — {{ last_receipt.created_at }}</small>
+        </div>
+        <div class="text-center my-2">
+          <div class="display-6 text-danger fw-bold">−{{ last_receipt.montant|money }}</div>
+        </div>
+        <table class="table table-sm">
+          <tr><th>Matricule</th><td>{{ last_receipt.matricule }}</td></tr>
+          <tr><th>Téléphone</th><td>{{ last_receipt.telephone|default:"—" }}</td></tr>
+          <tr><th>Nouveau solde</th><td><strong>{{ last_receipt.solde_apres|money }}</strong></td></tr>
+          <tr><th>Agent</th><td>{{ last_receipt.agent_nom }}</td></tr>
+        </table>
+        <button onclick="window.print()" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-printer"></i> Imprimer
+        </button>
+      </div>
+    {% else %}
+      <div class="card p-4 text-center text-muted">
+        <i class="bi bi-receipt" style="font-size:2rem;"></i>
+        <p class="mb-0 mt-2">Le reçu apparaîtra ici après validation.</p>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
