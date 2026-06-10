@@ -62,6 +62,7 @@ main.py                 # Point d'entrée
 - Sauvegarde automatique de la base locale
 - Journal d'audit complet
 - Gestion des produits, du stock (entrées/sorties) et des ventes décomptées du solde client
+- Bons et documents de stock en PDF : bon d'entrée, bon de sortie, fiche article (avec historique) et fiche d'inventaire (colonnes comptage physique / écart), avec en-tête société configurable — enregistrés dans `exports/bons/`
 - Synchronisation montante vers un serveur en ligne (statuts : en attente / synchronisé)
 
 ## Synchronisation en ligne (Phase 2)

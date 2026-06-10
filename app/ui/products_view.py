@@ -30,7 +30,8 @@ from PySide6.QtWidgets import (
 
 from app.models.user import User
 from app.services import product_service
-from app.utils.helpers import format_money
+from app.utils import stock_documents
+from app.utils.helpers import format_money, open_file
 from app.ui.widgets.dialogs import access_denied, confirm, error, info
 
 
@@ -155,17 +156,23 @@ class ProductsView(QWidget):
         delete_btn = QPushButton("Supprimer")
         delete_btn.setProperty("class", "danger")
         delete_btn.clicked.connect(self._delete)
+        fiche_btn = QPushButton("Fiche article (PDF)")
+        fiche_btn.clicked.connect(self._fiche_article)
+        inv_btn = QPushButton("Inventaire (PDF)")
+        inv_btn.clicked.connect(self._inventaire)
         bar.addWidget(self.search_edit)
         bar.addStretch()
         bar.addWidget(add_btn)
         bar.addWidget(edit_btn)
         bar.addWidget(entree_btn)
         bar.addWidget(sortie_btn)
+        bar.addWidget(fiche_btn)
+        bar.addWidget(inv_btn)
         bar.addWidget(delete_btn)
         # Scroll horizontal pour la barre d'actions si la fenêtre est étroite
         bar_widget = QWidget()
         bar_widget.setLayout(bar)
-        bar_widget.setMinimumWidth(680)
+        bar_widget.setMinimumWidth(940)
         bar_scroll = QScrollArea()
         bar_scroll.setWidgetResizable(True)
         bar_scroll.setFrameShape(QFrame.NoFrame)
@@ -190,7 +197,14 @@ class ProductsView(QWidget):
         # --- Onglet mouvements -----------------------------------------
         move_widget = QWidget()
         ml = QVBoxLayout(move_widget)
-        ml.addWidget(QLabel("Historique des mouvements de stock"))
+        move_bar = QHBoxLayout()
+        move_bar.addWidget(QLabel("Historique des mouvements de stock"))
+        move_bar.addStretch()
+        bon_btn = QPushButton("Bon du mouvement (PDF)")
+        bon_btn.setProperty("class", "secondary")
+        bon_btn.clicked.connect(self._bon_mouvement)
+        move_bar.addWidget(bon_btn)
+        ml.addLayout(move_bar)
         self.move_table = QTableWidget(0, len(MOVE_COLS))
         self.move_table.setHorizontalHeaderLabels(MOVE_COLS)
         self.move_table.verticalHeader().setVisible(False)
@@ -254,6 +268,7 @@ class ProductsView(QWidget):
             ]
             for col, val in enumerate(cells):
                 self.move_table.setItem(row, col, QTableWidgetItem(str(val)))
+            self.move_table.item(row, 0).setData(Qt.UserRole, m.id)
             color = QColor("#dcfce7") if m.type == "entree" else QColor("#fee2e2")
             for c in range(self.move_table.columnCount()):
                 self.move_table.item(row, c).setBackground(color)
@@ -315,13 +330,20 @@ class ProductsView(QWidget):
             return
         d = dlg.data()
         try:
-            product_service.adjust_stock(pid, type_, d["quantite"], motif=d["motif"])
+            updated = product_service.adjust_stock(pid, type_, d["quantite"], motif=d["motif"])
         except product_service.ProductError as e:
             error(self, "Erreur", str(e))
             return
         self.refresh()
         if self.on_changed:
             self.on_changed()
+        # Proposer la génération du bon correspondant au mouvement qui vient d'être créé.
+        moves = product_service.list_movements(product_id=pid, limit=1)
+        if moves and confirm(
+            self, "Bon de mouvement",
+            "Mouvement enregistré. Générer le bon PDF correspondant ?",
+        ):
+            self._generate_bon(moves[0], updated)
 
     def _delete(self) -> None:
         if not self.current_user.is_admin():
@@ -341,3 +363,60 @@ class ProductsView(QWidget):
         self.refresh()
         if self.on_changed:
             self.on_changed()
+
+    # ----------------------------------------------------------- documents PDF
+    def _generate_bon(self, movement, product=None) -> None:
+        if product is None:
+            product = product_service.get_product(movement.product_id)
+        try:
+            path = stock_documents.bon_mouvement_pdf(movement, product)
+        except Exception as e:  # génération PDF non critique : on informe sans planter
+            error(self, "Erreur", f"Impossible de générer le bon : {e}")
+            return
+        open_file(path)
+        info(self, "Bon généré", f"Bon enregistré :\n{path}")
+
+    def _bon_mouvement(self) -> None:
+        row = self.move_table.currentRow()
+        if row < 0:
+            info(self, "Sélection", "Sélectionnez un mouvement dans la liste.")
+            return
+        mid = self.move_table.item(row, 0).data(Qt.UserRole)
+        if mid is None:
+            return
+        movement = product_service.get_movement(int(mid))
+        if movement is None:
+            error(self, "Erreur", "Mouvement introuvable.")
+            return
+        self._generate_bon(movement)
+
+    def _fiche_article(self) -> None:
+        pid = self._selected_id()
+        if pid is None:
+            info(self, "Sélection", "Sélectionnez un produit.")
+            return
+        product = product_service.get_product(pid)
+        if product is None:
+            error(self, "Erreur", "Produit introuvable.")
+            return
+        movements = product_service.list_movements(product_id=pid, limit=500)
+        try:
+            path = stock_documents.fiche_article_pdf(product, movements)
+        except Exception as e:
+            error(self, "Erreur", f"Impossible de générer la fiche : {e}")
+            return
+        open_file(path)
+        info(self, "Fiche générée", f"Fiche enregistrée :\n{path}")
+
+    def _inventaire(self) -> None:
+        products = product_service.list_products(include_inactive=False)
+        if not products:
+            info(self, "Inventaire", "Aucun produit actif à inventorier.")
+            return
+        try:
+            path = stock_documents.inventaire_pdf(products)
+        except Exception as e:
+            error(self, "Erreur", f"Impossible de générer l'inventaire : {e}")
+            return
+        open_file(path)
+        info(self, "Inventaire généré", f"Inventaire enregistré :\n{path}")

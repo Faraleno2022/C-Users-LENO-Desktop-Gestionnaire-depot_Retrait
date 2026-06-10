@@ -32,6 +32,13 @@ KEY_AUTO_SYNC_INTERVAL = "sync.auto_interval_seconds"
 
 DEFAULT_AUTO_SYNC_INTERVAL = 60  # secondes
 
+# Clés de l'identité de la société (en-tête des bons et documents PDF)
+KEY_COMPANY_NAME = "company.name"
+KEY_COMPANY_ADDRESS = "company.address"
+KEY_COMPANY_PHONE = "company.phone"
+KEY_COMPANY_EMAIL = "company.email"
+KEY_COMPANY_FOOTER = "company.footer"
+
 _ENV_OVERRIDES = {
     KEY_SERVER_URL: "GESTIONNAIRE_SERVER_URL",
     KEY_DEVICE_TOKEN: "GESTIONNAIRE_DEVICE_TOKEN",
@@ -133,3 +140,36 @@ def get_auto_sync_config() -> dict:
 def set_auto_sync_config(enabled: bool, interval_seconds: int) -> None:
     set_setting(KEY_AUTO_SYNC_ENABLED, "1" if enabled else "0")
     set_setting(KEY_AUTO_SYNC_INTERVAL, str(max(15, int(interval_seconds))))
+
+
+# --- Identité de la société (en-tête des documents) -------------------------
+
+def get_company_info() -> dict:
+    """Coordonnées affichées en en-tête des bons et documents PDF.
+
+    À défaut de valeur saisie, on retombe sur le nom de l'application pour que
+    les documents restent présentables dès la première utilisation.
+    """
+    from app.config import APP_NAME
+
+    return {
+        "name": (get_setting(KEY_COMPANY_NAME, "") or "").strip() or APP_NAME,
+        "address": (get_setting(KEY_COMPANY_ADDRESS, "") or "").strip(),
+        "phone": (get_setting(KEY_COMPANY_PHONE, "") or "").strip(),
+        "email": (get_setting(KEY_COMPANY_EMAIL, "") or "").strip(),
+        "footer": (get_setting(KEY_COMPANY_FOOTER, "") or "").strip(),
+    }
+
+
+def set_company_info(
+    name: str = "",
+    address: str = "",
+    phone: str = "",
+    email: str = "",
+    footer: str = "",
+) -> None:
+    set_setting(KEY_COMPANY_NAME, (name or "").strip())
+    set_setting(KEY_COMPANY_ADDRESS, (address or "").strip())
+    set_setting(KEY_COMPANY_PHONE, (phone or "").strip())
+    set_setting(KEY_COMPANY_EMAIL, (email or "").strip())
+    set_setting(KEY_COMPANY_FOOTER, (footer or "").strip())

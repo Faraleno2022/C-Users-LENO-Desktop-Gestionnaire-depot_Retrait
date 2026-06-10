@@ -75,6 +75,38 @@ class BackupView(QWidget):
         title.setFont(QFont("Segoe UI", 16, QFont.Bold))
         layout.addWidget(title)
 
+        # --- Coordonnées société (en-tête des bons PDF) -----------------
+        c_card = QFrame()
+        c_card.setProperty("class", "card")
+        cl = QVBoxLayout(c_card)
+        cl.setContentsMargins(16, 12, 16, 12)
+        cl.addWidget(self._h2("Coordonnées société (en-tête des bons et documents PDF)"))
+
+        company = settings_service.get_company_info()
+        c_form = QFormLayout()
+        self.company_name_edit = QLineEdit(company["name"])
+        self.company_name_edit.setPlaceholderText("Nom de l'entreprise")
+        self.company_address_edit = QLineEdit(company["address"])
+        self.company_address_edit.setPlaceholderText("Adresse complète")
+        self.company_phone_edit = QLineEdit(company["phone"])
+        self.company_phone_edit.setPlaceholderText("ex : +224 6XX XX XX XX")
+        self.company_email_edit = QLineEdit(company["email"])
+        self.company_email_edit.setPlaceholderText("contact@entreprise.com")
+        self.company_footer_edit = QLineEdit(company["footer"])
+        self.company_footer_edit.setPlaceholderText("Texte de pied de page (optionnel)")
+        c_form.addRow("Nom", self.company_name_edit)
+        c_form.addRow("Adresse", self.company_address_edit)
+        c_form.addRow("Téléphone", self.company_phone_edit)
+        c_form.addRow("Email", self.company_email_edit)
+        c_form.addRow("Pied de page", self.company_footer_edit)
+        cl.addLayout(c_form)
+
+        save_company_btn = QPushButton("Enregistrer les coordonnées")
+        save_company_btn.setProperty("class", "secondary")
+        save_company_btn.clicked.connect(self._save_company_info)
+        cl.addWidget(save_company_btn, alignment=Qt.AlignLeft)
+        layout.addWidget(c_card)
+
         # --- System check card ------------------------------------------
         sys_card = QFrame()
         sys_card.setProperty("class", "card")
@@ -285,6 +317,17 @@ class BackupView(QWidget):
         )
         info(self, "Sauvegarde automatique", "Préférences enregistrées.")
         self._refresh_auto_status()
+
+    def _save_company_info(self) -> None:
+        settings_service.set_company_info(
+            name=self.company_name_edit.text(),
+            address=self.company_address_edit.text(),
+            phone=self.company_phone_edit.text(),
+            email=self.company_email_edit.text(),
+            footer=self.company_footer_edit.text(),
+        )
+        info(self, "Coordonnées société",
+             "Coordonnées enregistrées. Elles apparaîtront en en-tête des bons PDF.")
 
     def _refresh_sync_status(self) -> None:
         if not hasattr(self, "sync_status_label"):

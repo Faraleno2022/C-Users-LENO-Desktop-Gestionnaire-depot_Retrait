@@ -241,6 +241,14 @@ def adjust_stock(product_id: int, type_: str, quantite: float, motif: str = "") 
     return get_product(product_id)
 
 
+def get_movement(movement_id: int) -> Optional[StockMovement]:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM stock_movements WHERE id = ?", (movement_id,)
+    ).fetchone()
+    return StockMovement.from_row(row) if row else None
+
+
 def list_movements(product_id: Optional[int] = None, limit: int = 200) -> List[StockMovement]:
     conn = get_connection()
     if product_id is not None:
