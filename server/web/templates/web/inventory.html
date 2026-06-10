@@ -1,0 +1,139 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Inventaire{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center mb-3">
+  <h1 class="h3 me-auto mb-2"><i class="bi bi-clipboard-check"></i> Inventaire physique</h1>
+  <a href="{% url 'web:stock_movements' %}" class="btn btn-outline-secondary">
+    <i class="bi bi-arrow-down-up"></i> Journal des mouvements
+  </a>
+</div>
+
+{% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+{% if messages %}
+  {% for m in messages %}<div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>{% endfor %}
+{% endif %}
+
+<div class="row g-3 mb-3">
+  <div class="col-sm-4">
+    <div class="card stat-card stat-info p-3">
+      <div class="label">Produits actifs</div>
+      <div class="value">{{ products|length }}</div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="card stat-card stat-teal p-3">
+      <div class="label">Unités en stock (théorique)</div>
+      <div class="value">{{ total_units|num }}</div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="card stat-card stat-success p-3">
+      <div class="label">Valeur du stock</div>
+      <div class="value">{{ total_value|money }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="alert alert-info small">
+  <i class="bi bi-info-circle"></i>
+  Saisissez la quantité <strong>réellement comptée</strong> pour chaque produit.
+  Les produits laissés vides ne sont pas touchés. À l'enregistrement, chaque écart
+  génère automatiquement un mouvement d'ajustement (entrée ou sortie).
+</div>
+
+<form method="post" class="card shadow-sm">
+  {% csrf_token %}
+
+  <div class="p-3 border-bottom">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-6">
+        <label class="form-label small mb-1">Motif / référence d'inventaire</label>
+        <input type="text" name="motif" class="form-control form-control-sm"
+               placeholder="ex : Inventaire mensuel juin 2026" value="Inventaire physique">
+      </div>
+      <div class="col-md-6 text-md-end">
+        <span class="text-muted small me-2">Écart de valeur estimé :</span>
+        <strong id="ecartValueTotal">0 GNF</strong>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead>
+        <tr>
+          <th>Produit</th>
+          <th class="text-end">Prix unit.</th>
+          <th class="text-end">Stock théorique</th>
+          <th class="text-end" style="width:130px;">Stock compté</th>
+          <th class="text-end">Écart</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in products %}
+          <tr>
+            <td>
+              {{ p.nom }}
+              {% if p.reference %}<span class="text-muted small">({{ p.reference }})</span>{% endif %}
+            </td>
+            <td class="text-end">{{ p.prix_unitaire|money }}</td>
+            <td class="text-end theo" data-theo="{{ p.quantite_stock|stringformat:'.0f' }}"
+                data-prix="{{ p.prix_unitaire|stringformat:'.0f' }}">{{ p.quantite_stock|num }}</td>
+            <td class="text-end">
+              <input type="number" step="1" min="0" name="count_{{ p.id }}"
+                     class="form-control form-control-sm text-end count-input"
+                     placeholder="{{ p.quantite_stock|stringformat:'.0f' }}">
+            </td>
+            <td class="text-end ecart fw-bold">—</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="text-center text-muted py-4">Aucun produit actif.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="p-3 border-top d-flex gap-2">
+    <button type="submit" class="btn btn-success">
+      <i class="bi bi-check-lg"></i> Enregistrer l'inventaire
+    </button>
+    <a href="{% url 'web:products' %}" class="btn btn-secondary">Annuler</a>
+  </div>
+</form>
+
+<script>
+  (function () {
+    function fmt(n) { return n.toLocaleString('fr-FR').replace(/,/g, ' '); }
+
+    function recompute() {
+      var totalEcartValue = 0;
+      document.querySelectorAll('.count-input').forEach(function (input) {
+        var row = input.closest('tr');
+        var theoCell = row.querySelector('.theo');
+        var ecartCell = row.querySelector('.ecart');
+        var theo = parseFloat(theoCell.dataset.theo) || 0;
+        var prix = parseFloat(theoCell.dataset.prix) || 0;
+        if (input.value.trim() === '') {
+          ecartCell.textContent = '—';
+          ecartCell.className = 'text-end ecart fw-bold';
+          return;
+        }
+        var counted = parseFloat(input.value) || 0;
+        var ecart = counted - theo;
+        ecartCell.textContent = (ecart > 0 ? '+' : '') + fmt(ecart);
+        ecartCell.className = 'text-end ecart fw-bold ' +
+          (ecart > 0 ? 'text-success' : (ecart < 0 ? 'text-danger' : 'text-muted'));
+        totalEcartValue += ecart * prix;
+      });
+      document.getElementById('ecartValueTotal').textContent =
+        (totalEcartValue > 0 ? '+' : '') + fmt(Math.round(totalEcartValue)) + ' GNF';
+    }
+
+    document.querySelectorAll('.count-input').forEach(function (input) {
+      input.addEventListener('input', recompute);
+    });
+  })();
+</script>
+{% endblock %}

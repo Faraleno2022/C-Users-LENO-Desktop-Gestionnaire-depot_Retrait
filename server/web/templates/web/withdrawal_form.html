@@ -42,19 +42,54 @@
     <form method="post" class="card p-4 shadow-sm">
       {% csrf_token %}
 
-      <div class="mb-3">
-        <label class="form-label">Matricule <span class="text-danger">*</span></label>
-        <input type="text" name="matricule" value="{{ matricule_preview }}" class="form-control" required>
+      <div class="row g-2">
+        <div class="col-sm-6 mb-3">
+          <label class="form-label">Matricule <span class="text-danger">*</span></label>
+          <input type="text" name="matricule" value="{{ matricule_preview }}" class="form-control" required>
+        </div>
+        <div class="col-sm-6 mb-3">
+          <label class="form-label">Téléphone</label>
+          <input type="text" name="telephone" class="form-control">
+        </div>
+      </div>
+
+      {# ---------- Produits (optionnel, multi-lignes) ---------- #}
+      <label class="form-label">Produits retirés</label>
+      <p class="text-muted small mb-2">
+        Ajoutez un ou plusieurs produits : le montant global se calcule automatiquement.
+        Laissez vide pour un retrait en espèces simple.
+      </p>
+
+      <div class="table-responsive">
+        <table class="table table-sm align-middle" id="prodTable">
+          <thead>
+            <tr>
+              <th style="min-width:160px;">Produit</th>
+              <th style="width:90px;">Qté</th>
+              <th class="text-end" style="width:130px;">Sous-total</th>
+              <th style="width:40px;"></th>
+            </tr>
+          </thead>
+          <tbody id="prodRows"></tbody>
+          <tfoot>
+            <tr>
+              <td colspan="4">
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="addRowBtn">
+                  <i class="bi bi-plus-lg"></i> Ajouter un produit
+                </button>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
       </div>
 
       <div class="mb-3">
-        <label class="form-label">Téléphone</label>
-        <input type="text" name="telephone" class="form-control">
-      </div>
-
-      <div class="mb-3">
-        <label class="form-label">Montant (GNF) <span class="text-danger">*</span></label>
-        <input type="number" step="1" min="1" name="montant" class="form-control form-control-lg" required>
+        <label class="form-label">Montant total (GNF) <span class="text-danger">*</span></label>
+        <input type="number" step="1" min="1" name="montant" id="montant"
+               class="form-control form-control-lg fw-bold" required>
+        <div class="form-text" id="montantHelp">
+          Calculé depuis les produits, ou saisissez directement pour un retrait en espèces.
+        </div>
       </div>
 
       <div class="mb-3">
@@ -74,33 +109,148 @@
         <i class="bi bi-arrow-up-circle"></i> Valider le retrait
       </button>
     </form>
+
+    {# Modèle de ligne produit cloné en JS #}
+    <template id="rowTemplate">
+      <tr class="prod-row">
+        <td>
+          <select name="prod_id" class="form-select form-select-sm prod-select">
+            <option value="">— Sélectionner —</option>
+            {% for p in products %}
+              <option value="{{ p.id }}"
+                      data-prix="{{ p.prix_unitaire|stringformat:'.0f' }}"
+                      data-stock="{{ p.quantite_stock|stringformat:'.0f' }}">
+                {{ p.nom }} — {{ p.prix_unitaire|money }} (stock : {{ p.quantite_stock }})
+              </option>
+            {% endfor %}
+          </select>
+        </td>
+        <td>
+          <input type="number" name="prod_qte" min="0" step="1" value="1"
+                 class="form-control form-control-sm prod-qte">
+        </td>
+        <td class="text-end prod-subtotal">—</td>
+        <td>
+          <button type="button" class="btn btn-link text-danger p-0 remove-row" title="Retirer">
+            <i class="bi bi-x-circle"></i>
+          </button>
+        </td>
+      </tr>
+    </template>
+
+    <script>
+      (function () {
+        var rowsBody = document.getElementById('prodRows');
+        var tpl = document.getElementById('rowTemplate');
+        var montant = document.getElementById('montant');
+
+        function fmt(n) {
+          return n.toLocaleString('fr-FR').replace(/,/g, ' ');
+        }
+
+        function recompute() {
+          var grand = 0;
+          var hasProduct = false;
+          rowsBody.querySelectorAll('.prod-row').forEach(function (row) {
+            var sel = row.querySelector('.prod-select');
+            var opt = sel.options[sel.selectedIndex];
+            var prix = parseFloat(opt && opt.dataset.prix) || 0;
+            var qte = parseFloat(row.querySelector('.prod-qte').value) || 0;
+            var sub = sel.value ? prix * qte : 0;
+            row.querySelector('.prod-subtotal').textContent =
+              sub > 0 ? fmt(sub) + ' GNF' : '—';
+            if (sel.value) { hasProduct = true; grand += prix * qte; }
+          });
+          // S'il y a au moins un produit sélectionné, le montant est piloté par les produits.
+          if (hasProduct) {
+            montant.value = grand > 0 ? Math.round(grand) : '';
+            montant.readOnly = true;
+            montant.classList.add('bg-light');
+          } else {
+            montant.readOnly = false;
+            montant.classList.remove('bg-light');
+          }
+        }
+
+        function wireRow(row) {
+          row.querySelector('.prod-select').addEventListener('change', recompute);
+          row.querySelector('.prod-qte').addEventListener('input', recompute);
+          row.querySelector('.remove-row').addEventListener('click', function () {
+            row.remove();
+            recompute();
+          });
+        }
+
+        function addRow() {
+          var clone = tpl.content.firstElementChild.cloneNode(true);
+          rowsBody.appendChild(clone);
+          wireRow(clone);
+          recompute();
+        }
+
+        document.getElementById('addRowBtn').addEventListener('click', addRow);
+        // Une ligne au départ pour guider l'utilisateur.
+        addRow();
+      })();
+    </script>
   </div>
 
   <div class="col-12 col-lg-5">
     <h2 class="h5 mb-3">Dernier retrait enregistré</h2>
     {% if last_receipt %}
-      <div class="card p-4 shadow-sm border-danger">
+      <div class="card p-4 shadow-sm border-danger" id="receipt">
         <div class="text-center border-bottom pb-2 mb-3" style="border-style:dashed!important;">
-          <div class="fw-bold">REÇU RETRAIT</div>
+          <div class="fw-bold">FICHE DE RETRAIT</div>
           <small class="text-muted">N° {{ last_receipt.id }} — {{ last_receipt.created_at }}</small>
         </div>
-        <div class="text-center my-2">
-          <div class="display-6 text-danger fw-bold">−{{ last_receipt.montant|money }}</div>
-        </div>
+
         <table class="table table-sm">
           <tr><th>Matricule</th><td>{{ last_receipt.matricule }}</td></tr>
           <tr><th>Téléphone</th><td>{{ last_receipt.telephone|default:"—" }}</td></tr>
-          <tr><th>Nouveau solde</th><td><strong>{{ last_receipt.solde_apres|money }}</strong></td></tr>
           <tr><th>Agent</th><td>{{ last_receipt.agent_nom }}</td></tr>
         </table>
+
+        {% if last_receipt.lines %}
+          <div class="fw-bold small text-muted mt-1 mb-1">Produits retirés</div>
+          <table class="table table-sm">
+            <thead>
+              <tr><th>Produit</th><th class="text-center">Qté</th><th class="text-end">Sous-total</th></tr>
+            </thead>
+            <tbody>
+              {% for l in last_receipt.lines %}
+                <tr>
+                  <td>{{ l.product_nom }}</td>
+                  <td class="text-center">{{ l.quantite }}</td>
+                  <td class="text-end">{{ l.total|money }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+
+        <table class="table table-sm mb-3">
+          <tr>
+            <th>Solde avant</th>
+            <td class="text-end">{{ last_receipt.solde_avant|money }}</td>
+          </tr>
+          <tr class="text-danger">
+            <th>Montant du retrait</th>
+            <td class="text-end fw-bold">−{{ last_receipt.montant|money }}</td>
+          </tr>
+          <tr class="table-active">
+            <th>Solde restant</th>
+            <td class="text-end fw-bold">{{ last_receipt.solde_apres|money }}</td>
+          </tr>
+        </table>
+
         <button onclick="window.print()" class="btn btn-outline-secondary btn-sm">
-          <i class="bi bi-printer"></i> Imprimer
+          <i class="bi bi-printer"></i> Imprimer la fiche
         </button>
       </div>
     {% else %}
       <div class="card p-4 text-center text-muted">
         <i class="bi bi-receipt" style="font-size:2rem;"></i>
-        <p class="mb-0 mt-2">Le reçu apparaîtra ici après validation.</p>
+        <p class="mb-0 mt-2">La fiche apparaîtra ici après validation.</p>
       </div>
     {% endif %}
   </div>

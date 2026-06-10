@@ -1,0 +1,89 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Mouvements de stock{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center mb-3">
+  <h1 class="h3 me-3 mb-0">Mouvements de stock</h1>
+  <span class="text-muted">
+    {{ n_total|num }} mouvement(s) ·
+    <span class="text-success">+{{ total_entrees|num }} entrées</span> ·
+    <span class="text-danger">−{{ total_sorties|num }} sorties</span>
+  </span>
+</div>
+
+<form method="get" class="filter-card mb-3">
+  <div class="row g-2">
+    <div class="col-sm-6 col-md-3">
+      <label class="form-label small">Produit</label>
+      <input type="text" name="product" value="{{ filters.product }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Type</label>
+      <select name="type" class="form-select form-select-sm">
+        <option value="">Tous</option>
+        <option value="entree" {% if filters.type == 'entree' %}selected{% endif %}>Entrée</option>
+        <option value="sortie" {% if filters.type == 'sortie' %}selected{% endif %}>Sortie</option>
+      </select>
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Du</label>
+      <input type="date" name="date_from" value="{{ filters.date_from }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Au</label>
+      <input type="date" name="date_to" value="{{ filters.date_to }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Agent</label>
+      <input type="text" name="agent" value="{{ filters.agent }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-md-1 d-flex align-items-end">
+      <button class="btn btn-primary btn-sm w-100">OK</button>
+    </div>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Produit</th>
+          <th>Type</th>
+          <th class="text-end">Quantité</th>
+          <th class="text-end">Stock après</th>
+          <th>Motif</th>
+          <th>Agent</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in page_obj %}
+          <tr>
+            <td>{{ m.created_at }}</td>
+            <td>{{ m.product_nom }}</td>
+            <td>
+              {% if m.type == 'entree' %}
+                <span class="badge badge-depot"><i class="bi bi-box-arrow-in-down"></i> Entrée</span>
+              {% else %}
+                <span class="badge badge-retrait"><i class="bi bi-box-arrow-up"></i> Sortie</span>
+              {% endif %}
+            </td>
+            <td class="text-end fw-bold {% if m.type == 'entree' %}text-success{% else %}text-danger{% endif %}">
+              {% if m.type == 'entree' %}+{% else %}−{% endif %}{{ m.quantite|num }}
+            </td>
+            <td class="text-end">{{ m.stock_apres|num }}</td>
+            <td>{{ m.motif|default:"—" }}</td>
+            <td>{{ m.agent_nom|default:"—" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="7" class="text-center text-muted py-4">Aucun mouvement ne correspond aux filtres.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include "web/_pagination.html" %}
+{% endblock %}
