@@ -61,7 +61,8 @@ main.py                 # Point d'entrée
 - Rapports journalier / mensuel / annuel
 - Sauvegarde automatique de la base locale
 - Journal d'audit complet
-- Gestion des produits, du stock (entrées/sorties) et des ventes décomptées du solde client
+- Gestion des produits (catégorie, unité, prix d'achat/vente, seuil min, stock max, emplacement), du stock (entrées/sorties) et des ventes décomptées du solde client
+- Alertes visuelles : rupture, stock bas, surstock
 - Bons et documents de stock en PDF : bon d'entrée, bon de sortie, fiche article (avec historique) et fiche d'inventaire (colonnes comptage physique / écart), avec en-tête société configurable — enregistrés dans `exports/bons/`
 - Synchronisation montante vers un serveur en ligne (statuts : en attente / synchronisé)
 

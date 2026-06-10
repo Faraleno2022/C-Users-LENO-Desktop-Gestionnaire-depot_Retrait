@@ -43,29 +43,44 @@ def create_product(
     description: str = "",
     quantite_initiale: float = 0,
     seuil_alerte: float = 0,
+    categorie: str = "",
+    unite: str = "",
+    prix_achat: float = 0,
+    stock_max: float = 0,
+    emplacement: str = "",
 ) -> Product:
     nom = (nom or "").strip()
     if not nom:
         raise ProductError("Le nom du produit est obligatoire.")
     if prix_unitaire is None or prix_unitaire < 0:
-        raise ProductError("Le prix unitaire doit être positif ou nul.")
+        raise ProductError("Le prix de vente doit être positif ou nul.")
+    if prix_achat is not None and prix_achat < 0:
+        raise ProductError("Le prix d'achat doit être positif ou nul.")
     if quantite_initiale < 0:
         raise ProductError("La quantité initiale ne peut pas être négative.")
+    if stock_max and seuil_alerte and stock_max < seuil_alerte:
+        raise ProductError("Le stock maximum doit être supérieur au seuil d'alerte.")
 
     now = now_iso()
     with db_transaction() as conn:
         cur = conn.execute(
-            """INSERT INTO products (uuid, reference, nom, description, prix_unitaire,
-                                    quantite_stock, seuil_alerte, actif, created_at, updated_at, sync_status)
-               VALUES (?,?,?,?,?,?,?,1,?,?,'pending')""",
+            """INSERT INTO products (uuid, reference, nom, description, categorie, unite,
+                                    prix_achat, prix_unitaire, quantite_stock, seuil_alerte,
+                                    stock_max, emplacement, actif, created_at, updated_at, sync_status)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,'pending')""",
             (
                 new_uuid(),
                 reference or None,
                 nom,
                 description or None,
+                (categorie or "").strip() or None,
+                (unite or "").strip() or None,
+                float(prix_achat or 0),
                 float(prix_unitaire),
                 float(quantite_initiale),
                 float(seuil_alerte),
+                float(stock_max or 0),
+                (emplacement or "").strip() or None,
                 now,
                 now,
             ),
@@ -98,6 +113,11 @@ def update_product(
     description: Optional[str] = None,
     seuil_alerte: Optional[float] = None,
     actif: Optional[bool] = None,
+    categorie: Optional[str] = None,
+    unite: Optional[str] = None,
+    prix_achat: Optional[float] = None,
+    stock_max: Optional[float] = None,
+    emplacement: Optional[str] = None,
 ) -> Product:
     product = get_product(product_id)
     if product is None:
@@ -111,7 +131,7 @@ def update_product(
         params.append(nom.strip())
     if prix_unitaire is not None:
         if prix_unitaire < 0:
-            raise ProductError("Le prix unitaire doit être positif ou nul.")
+            raise ProductError("Le prix de vente doit être positif ou nul.")
         fields.append("prix_unitaire = ?")
         params.append(float(prix_unitaire))
     if reference is not None:
@@ -123,6 +143,23 @@ def update_product(
     if seuil_alerte is not None:
         fields.append("seuil_alerte = ?")
         params.append(float(seuil_alerte))
+    if categorie is not None:
+        fields.append("categorie = ?")
+        params.append((categorie or "").strip() or None)
+    if unite is not None:
+        fields.append("unite = ?")
+        params.append((unite or "").strip() or None)
+    if prix_achat is not None:
+        if prix_achat < 0:
+            raise ProductError("Le prix d'achat doit être positif ou nul.")
+        fields.append("prix_achat = ?")
+        params.append(float(prix_achat))
+    if stock_max is not None:
+        fields.append("stock_max = ?")
+        params.append(float(stock_max))
+    if emplacement is not None:
+        fields.append("emplacement = ?")
+        params.append((emplacement or "").strip() or None)
     if actif is not None:
         fields.append("actif = ?")
         params.append(1 if actif else 0)
@@ -273,3 +310,24 @@ def stock_value() -> float:
         "SELECT COALESCE(SUM(quantite_stock * prix_unitaire), 0) AS v FROM products WHERE actif = 1"
     ).fetchone()
     return float(row["v"])
+
+
+def stock_value_cost() -> float:
+    """Valeur du stock au prix d'achat (coût), à défaut au prix de vente."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(quantite_stock * "
+        "CASE WHEN prix_achat > 0 THEN prix_achat ELSE prix_unitaire END), 0) AS v "
+        "FROM products WHERE actif = 1"
+    ).fetchone()
+    return float(row["v"])
+
+
+def list_categories() -> List[str]:
+    """Catégories distinctes déjà saisies (pour l'auto-complétion du formulaire)."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT DISTINCT categorie FROM products "
+        "WHERE categorie IS NOT NULL AND TRIM(categorie) <> '' ORDER BY categorie"
+    ).fetchall()
+    return [r["categorie"] for r in rows]

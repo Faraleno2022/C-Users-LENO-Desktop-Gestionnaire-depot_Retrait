@@ -106,6 +106,30 @@ def _apply_post_migrations(conn) -> None:
         )
         conn.commit()
 
+    cur.execute("SELECT value FROM app_settings WHERE key = 'mig_product_fields_v1'")
+    row = cur.fetchone()
+    if row is None:
+        # Fiche article enrichie : catégorie, unité, prix d'achat, stock max, emplacement.
+        # Champs locaux (non synchronisés pour l'instant) ; ajout idempotent.
+        cols = [r["name"] for r in cur.execute("PRAGMA table_info(products)").fetchall()]
+        if "categorie" not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN categorie TEXT")
+        if "unite" not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN unite TEXT")
+        if "prix_achat" not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN prix_achat REAL NOT NULL DEFAULT 0")
+        if "stock_max" not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN stock_max REAL NOT NULL DEFAULT 0")
+        if "emplacement" not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN emplacement TEXT")
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_products_categorie ON products(categorie)"
+        )
+        cur.execute(
+            "INSERT INTO app_settings(key, value) VALUES ('mig_product_fields_v1', '1')"
+        )
+        conn.commit()
+
     cur.execute("SELECT value FROM app_settings WHERE key = 'mig_audit_sync_v1'")
     row = cur.fetchone()
     if row is None:

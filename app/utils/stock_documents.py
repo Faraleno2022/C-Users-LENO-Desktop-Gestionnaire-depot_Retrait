@@ -270,16 +270,31 @@ def fiche_article_pdf(product, movements: Optional[List] = None) -> Path:
     movements = movements or []
     valeur_stock = float(product.quantite_stock) * float(product.prix_unitaire)
 
+    prix_achat = float(getattr(product, "prix_achat", 0) or 0)
+    if product.en_rupture():
+        etat = "⛔ Rupture de stock"
+    elif product.en_alerte():
+        etat = "⚠ Stock bas (alerte)"
+    elif product.en_surstock():
+        etat = "↑ Surstock"
+    else:
+        etat = "Normal"
+
     story = _header_story(styles, "FICHE ARTICLE")
     story.append(_info_block(styles, [
         ("Référence", product.reference or "—"),
         ("Nom", product.nom),
-        ("Prix unitaire", format_money(product.prix_unitaire)),
+        ("Catégorie", getattr(product, "categorie", None) or "—"),
+        ("Unité", getattr(product, "unite", None) or "—"),
+        ("Prix d'achat", format_money(prix_achat) if prix_achat else "—"),
+        ("Prix de vente", format_money(product.prix_unitaire)),
         ("Stock actuel", f"{product.quantite_stock:g}"),
-        ("Seuil d'alerte", f"{product.seuil_alerte:g}"),
+        ("Emplacement", getattr(product, "emplacement", None) or "—"),
+        ("Seuil d'alerte (min)", f"{product.seuil_alerte:g}"),
+        ("Stock maximum", f"{product.stock_max:g}" if getattr(product, "stock_max", 0) else "—"),
         ("Valeur du stock", format_money(valeur_stock)),
         ("Statut", "Actif" if product.actif else "Inactif"),
-        ("État", "⚠ En alerte" if product.en_alerte() else "Normal"),
+        ("État", etat),
     ]))
     if product.description:
         story.append(Spacer(1, 3 * mm))

@@ -35,7 +35,9 @@ from app.utils.helpers import format_money, open_file
 from app.ui.widgets.dialogs import access_denied, confirm, error, info
 
 
-PRODUCT_COLS = ["ID", "Référence", "Nom", "Prix unitaire", "Stock", "Seuil", "Valeur", "Statut"]
+PRODUCT_COLS = ["ID", "Référence", "Nom", "Catégorie", "Unité", "Prix vente",
+                "Stock", "Seuil", "Max", "Emplacement", "Valeur", "Statut"]
+UNITES = ["Pièce", "Carton", "Kg", "Litre", "Sac", "Paquet", "Mètre", "Boîte"]
 MOVE_COLS = ["Date", "Produit", "Type", "Quantité", "Stock après", "Motif", "Agent"]
 
 
@@ -44,13 +46,40 @@ class ProductFormDialog(QDialog):
         super().__init__(parent)
         self.product = product
         self.setWindowTitle("Modifier le produit" if product else "Nouveau produit")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(440)
         layout = QFormLayout(self)
 
         self.nom_edit = QLineEdit(product.nom if product else "")
         self.ref_edit = QLineEdit(product.reference if product and product.reference else "")
+
+        # Catégorie : combo éditable pré-rempli avec les catégories existantes.
+        self.cat_combo = QComboBox()
+        self.cat_combo.setEditable(True)
+        existing_cats = product_service.list_categories()
+        self.cat_combo.addItem("")
+        self.cat_combo.addItems(existing_cats)
+        if product and product.categorie:
+            if product.categorie not in existing_cats:
+                self.cat_combo.addItem(product.categorie)
+            self.cat_combo.setCurrentText(product.categorie)
+        else:
+            self.cat_combo.setCurrentText("")
+
+        # Unité : combo éditable avec unités courantes.
+        self.unite_combo = QComboBox()
+        self.unite_combo.setEditable(True)
+        self.unite_combo.addItem("")
+        self.unite_combo.addItems(UNITES)
+        self.unite_combo.setCurrentText(product.unite if product and product.unite else "")
+
         self.desc_edit = QTextEdit(product.description if product and product.description else "")
-        self.desc_edit.setMaximumHeight(70)
+        self.desc_edit.setMaximumHeight(60)
+
+        self.prix_achat_spin = QDoubleSpinBox()
+        self.prix_achat_spin.setMaximum(1_000_000_000)
+        self.prix_achat_spin.setDecimals(0)
+        self.prix_achat_spin.setGroupSeparatorShown(True)
+        self.prix_achat_spin.setValue(product.prix_achat if product else 0)
 
         self.prix_spin = QDoubleSpinBox()
         self.prix_spin.setMaximum(1_000_000_000)
@@ -63,11 +92,23 @@ class ProductFormDialog(QDialog):
         self.seuil_spin.setDecimals(0)
         self.seuil_spin.setValue(product.seuil_alerte if product else 0)
 
+        self.stock_max_spin = QDoubleSpinBox()
+        self.stock_max_spin.setMaximum(10_000_000)
+        self.stock_max_spin.setDecimals(0)
+        self.stock_max_spin.setValue(product.stock_max if product else 0)
+
+        self.empl_edit = QLineEdit(product.emplacement if product and product.emplacement else "")
+
         layout.addRow("Nom *", self.nom_edit)
         layout.addRow("Référence", self.ref_edit)
+        layout.addRow("Catégorie", self.cat_combo)
+        layout.addRow("Unité", self.unite_combo)
         layout.addRow("Description", self.desc_edit)
-        layout.addRow("Prix unitaire *", self.prix_spin)
-        layout.addRow("Seuil d'alerte stock", self.seuil_spin)
+        layout.addRow("Prix d'achat", self.prix_achat_spin)
+        layout.addRow("Prix de vente *", self.prix_spin)
+        layout.addRow("Seuil d'alerte (min)", self.seuil_spin)
+        layout.addRow("Stock maximum", self.stock_max_spin)
+        layout.addRow("Emplacement", self.empl_edit)
 
         if product is None:
             self.qte_spin = QDoubleSpinBox()
@@ -86,9 +127,14 @@ class ProductFormDialog(QDialog):
         return {
             "nom": self.nom_edit.text().strip(),
             "reference": self.ref_edit.text().strip(),
+            "categorie": self.cat_combo.currentText().strip(),
+            "unite": self.unite_combo.currentText().strip(),
             "description": self.desc_edit.toPlainText().strip(),
+            "prix_achat": self.prix_achat_spin.value(),
             "prix_unitaire": self.prix_spin.value(),
             "seuil_alerte": self.seuil_spin.value(),
+            "stock_max": self.stock_max_spin.value(),
+            "emplacement": self.empl_edit.text().strip(),
             "quantite_initiale": self.qte_spin.value() if self.qte_spin else 0,
         }
 
@@ -232,9 +278,13 @@ class ProductsView(QWidget):
                 str(p.id),
                 p.reference or "",
                 p.nom,
+                p.categorie or "",
+                p.unite or "",
                 format_money(p.prix_unitaire),
                 f"{p.quantite_stock:g}",
                 f"{p.seuil_alerte:g}",
+                f"{p.stock_max:g}" if p.stock_max else "",
+                p.emplacement or "",
                 format_money(valeur),
                 "Actif" if p.actif else "Inactif",
             ]
@@ -243,8 +293,12 @@ class ProductsView(QWidget):
             self.table.item(row, 0).setData(Qt.UserRole, p.id)
             if not p.actif:
                 color = QColor("#f3f4f6")
+            elif p.en_rupture():
+                color = QColor("#fecaca")  # rupture de stock
             elif p.en_alerte():
                 color = QColor("#fef3c7")  # alerte stock bas
+            elif p.en_surstock():
+                color = QColor("#dbeafe")  # surstock
             else:
                 color = QColor("#ffffff")
             for c in range(self.table.columnCount()):
@@ -289,7 +343,8 @@ class ProductsView(QWidget):
             product_service.create_product(
                 nom=d["nom"], prix_unitaire=d["prix_unitaire"], reference=d["reference"],
                 description=d["description"], quantite_initiale=d["quantite_initiale"],
-                seuil_alerte=d["seuil_alerte"],
+                seuil_alerte=d["seuil_alerte"], categorie=d["categorie"], unite=d["unite"],
+                prix_achat=d["prix_achat"], stock_max=d["stock_max"], emplacement=d["emplacement"],
             )
         except product_service.ProductError as e:
             error(self, "Erreur", str(e))
@@ -312,7 +367,8 @@ class ProductsView(QWidget):
             product_service.update_product(
                 pid, nom=d["nom"], prix_unitaire=d["prix_unitaire"],
                 reference=d["reference"], description=d["description"],
-                seuil_alerte=d["seuil_alerte"],
+                seuil_alerte=d["seuil_alerte"], categorie=d["categorie"], unite=d["unite"],
+                prix_achat=d["prix_achat"], stock_max=d["stock_max"], emplacement=d["emplacement"],
             )
         except product_service.ProductError as e:
             error(self, "Erreur", str(e))

@@ -86,9 +86,14 @@ SCHEMA_STATEMENTS = [
         reference TEXT,
         nom TEXT NOT NULL,
         description TEXT,
+        categorie TEXT,
+        unite TEXT,
+        prix_achat REAL NOT NULL DEFAULT 0,
         prix_unitaire REAL NOT NULL CHECK (prix_unitaire >= 0),
         quantite_stock REAL NOT NULL DEFAULT 0,
         seuil_alerte REAL NOT NULL DEFAULT 0,
+        stock_max REAL NOT NULL DEFAULT 0,
+        emplacement TEXT,
         actif INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -98,6 +103,8 @@ SCHEMA_STATEMENTS = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_products_nom ON products(nom);",
     "CREATE INDEX IF NOT EXISTS idx_products_ref ON products(reference);",
+    # Note : l'index sur `categorie` est créé dans la migration mig_product_fields_v1
+    # (après l'ajout de la colonne), pour ne pas échouer sur les bases existantes.
     """
     CREATE TABLE IF NOT EXISTS stock_movements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
