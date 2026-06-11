@@ -30,7 +30,7 @@ DEFAULT_AUTO_BACKUP_KEEP = 10      # nombre de sauvegardes auto conservées
 KEY_AUTO_SYNC_ENABLED = "sync.auto_enabled"
 KEY_AUTO_SYNC_INTERVAL = "sync.auto_interval_seconds"
 
-DEFAULT_AUTO_SYNC_INTERVAL = 60  # secondes
+DEFAULT_AUTO_SYNC_INTERVAL = 15  # secondes
 
 # Clés de l'identité de la société (en-tête des bons et documents PDF)
 KEY_COMPANY_NAME = "company.name"
@@ -131,7 +131,9 @@ def mark_auto_backup_done(when_iso: str) -> None:
 def get_auto_sync_config() -> dict:
     enabled = get_setting(KEY_AUTO_SYNC_ENABLED)
     return {
-        "enabled": (enabled == "1") if enabled is not None else False,
+        # Activée par défaut : la sync ne démarre réellement que lorsque
+        # l'URL serveur et le jeton du poste sont configurés.
+        "enabled": (enabled == "1") if enabled is not None else True,
         "interval_seconds": max(15, _to_int(get_setting(KEY_AUTO_SYNC_INTERVAL),
                                             DEFAULT_AUTO_SYNC_INTERVAL)),
     }
