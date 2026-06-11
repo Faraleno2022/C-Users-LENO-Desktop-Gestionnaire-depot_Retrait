@@ -453,9 +453,29 @@ def matricule_balance_api(request):
     """Renvoie en JSON le solde serveur d'un matricule (chargement temps réel)."""
     matricule = (request.GET.get("matricule") or "").strip()
     if not matricule:
-        return JsonResponse({"matricule": "", "balance": 0.0, "found": False})
+        return JsonResponse({"matricule": "", "balance": 0.0, "found": False,
+                             "nom": "", "telephone": ""})
     balance = _matricule_balance(matricule)
     client = Client.objects.filter(matricule=matricule).first()
+
+    # Téléphone : priorité à la fiche client, sinon dernière opération connue
+    # (le numéro est enregistré sur chaque transaction / vente).
+    telephone = (client.telephone if client and client.telephone else "")
+    if not telephone:
+        last_tx = (
+            Transaction.objects.filter(matricule=matricule)
+            .exclude(telephone="").order_by("-created_at", "-id").first()
+        )
+        if last_tx:
+            telephone = last_tx.telephone
+        else:
+            last_sale = (
+                Sale.objects.filter(matricule=matricule)
+                .exclude(telephone="").order_by("-created_at", "-id").first()
+            )
+            if last_sale:
+                telephone = last_sale.telephone
+
     found = (
         client is not None
         or Transaction.objects.filter(matricule=matricule, deleted=False).exists()
@@ -465,7 +485,7 @@ def matricule_balance_api(request):
         "balance": balance,
         "found": found,
         "nom": client.nom if client else "",
-        "telephone": client.telephone if client else "",
+        "telephone": telephone,
     })
 
 
