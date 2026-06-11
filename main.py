@@ -4,9 +4,10 @@ from __future__ import annotations
 import sys
 import traceback
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
-from app.config import APP_NAME, ORG_NAME, ensure_directories
+from app.config import APP_NAME, ICON_PATH, ORG_NAME, ensure_directories
 from app.db.database import init_database
 from app.services import backup_service, user_service
 from app.ui.login_window import LoginWindow
@@ -19,6 +20,8 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(ORG_NAME)
+    if ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(ICON_PATH)))
     app.setStyleSheet(QSS)
 
     try:

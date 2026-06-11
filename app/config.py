@@ -2,19 +2,34 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
-APP_NAME = "Gestionnaire Dépôt / Retrait"
+APP_NAME = "EMAB GROUP — Gestionnaire Dépôt / Retrait"
 APP_VERSION = "1.0.0"
-ORG_NAME = "Gestionnaire"
+ORG_NAME = "EMAB GROUP"
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+IS_FROZEN = bool(getattr(sys, "frozen", False))
+
+if IS_FROZEN:
+    # Exécutable PyInstaller : les données vont dans un dossier utilisateur
+    # stable (PAS le dossier temporaire d'extraction, effacé à chaque run).
+    BASE_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "EMAB GROUP" / "Gestionnaire"
+    # Les ressources embarquées (assets) sont extraites dans sys._MEIPASS.
+    RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    RESOURCE_DIR = BASE_DIR
+
 DATA_DIR = BASE_DIR / "data"
 BACKUP_DIR = DATA_DIR / "backups"
 EXPORT_DIR = BASE_DIR / "exports"
 LOG_DIR = BASE_DIR / "logs"
+ASSETS_DIR = RESOURCE_DIR / "assets"
 
 DB_PATH = DATA_DIR / "gestionnaire.db"
+LOGO_PATH = ASSETS_DIR / "logo_emab.png"
+ICON_PATH = ASSETS_DIR / "logo_emab.ico"
 
 DEFAULT_SUPER_ADMIN = {
     "identifiant": "admin",
