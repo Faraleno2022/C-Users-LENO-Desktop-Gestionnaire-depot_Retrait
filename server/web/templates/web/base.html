@@ -179,6 +179,9 @@
         <a href="{% url 'web:users' %}" class="sidebar-link {% if request.resolver_match.url_name == 'users' %}active{% endif %}">
           <i class="bi bi-person-gear"></i> Utilisateurs
         </a>
+        <a href="{% url 'web:devices' %}" class="sidebar-link {% if request.resolver_match.url_name == 'devices' %}active{% endif %}">
+          <i class="bi bi-hdd-network"></i> Postes & jetons
+        </a>
         <a href="{% url 'web:journal' %}" class="sidebar-link {% if request.resolver_match.url_name == 'journal' %}active{% endif %}">
           <i class="bi bi-journal-text"></i> Journal d'audit
         </a>

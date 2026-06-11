@@ -16,7 +16,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
-from sync.models import AuditLog, Client, Product, RemoteUser, Sale, StockMovement, Transaction
+from sync.models import AuditLog, Client, Device, Product, RemoteUser, Sale, StockMovement, Transaction
 from web import reports as web_reports
 from web.reports import build_excel, build_pdf, _fmt_money, _fmt_num
 
@@ -1432,6 +1432,52 @@ def audit_journal(request):
             "user": user_q, "action": action_q, "target": target_q,
             "source": source, "date_from": date_from, "date_to": date_to,
         },
+        "remote": _remote(request),
+    })
+
+
+@login_required(login_url="web:login")
+@role_required("super_admin", "admin")
+def devices_list(request):
+    """Gestion des postes de synchronisation (jetons Device).
+
+    Permet de créer un jeton pour un poste de caisse ou pour la console
+    locale, sans passer par l'admin Django.
+    """
+    error = None
+    if request.method == "POST":
+        action = (request.POST.get("action") or "").strip()
+        if action == "create":
+            name = (request.POST.get("name") or "").strip()
+            if not name:
+                error = "Le nom du poste est obligatoire."
+            elif Device.objects.filter(name=name).exists():
+                error = f"Un poste nommé « {name} » existe déjà."
+            else:
+                device = Device.objects.create(name=name)
+                _log_audit(request, "device_create", target_type="device",
+                           target_id=str(device.id), details=name)
+                messages.success(request, f"Poste « {name} » créé. Copiez son jeton ci-dessous.")
+                return redirect("web:devices")
+        elif action == "toggle":
+            device = get_object_or_404(Device, pk=request.POST.get("pk"))
+            device.active = not device.active
+            device.save()
+            _log_audit(
+                request,
+                "device_activate" if device.active else "device_deactivate",
+                target_type="device", target_id=str(device.id), details=device.name,
+            )
+            messages.success(
+                request,
+                f"Poste « {device.name} » {'activé' if device.active else 'désactivé'}.",
+            )
+            return redirect("web:devices")
+
+    devices = Device.objects.all().order_by("name")
+    return render(request, "web/devices.html", {
+        "devices": devices,
+        "error": error,
         "remote": _remote(request),
     })
 
