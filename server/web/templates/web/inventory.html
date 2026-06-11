@@ -5,9 +5,17 @@
 {% block content %}
 <div class="d-flex flex-wrap align-items-center mb-3">
   <h1 class="h3 me-auto mb-2"><i class="bi bi-clipboard-check"></i> Inventaire physique</h1>
-  <a href="{% url 'web:stock_movements' %}" class="btn btn-outline-secondary">
-    <i class="bi bi-arrow-down-up"></i> Journal des mouvements
-  </a>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="?export=xlsx" class="btn btn-success">
+      <i class="bi bi-file-earmark-excel"></i> Feuille Excel
+    </a>
+    <a href="?export=pdf" class="btn btn-danger">
+      <i class="bi bi-file-earmark-pdf"></i> Feuille PDF
+    </a>
+    <a href="{% url 'web:stock_movements' %}" class="btn btn-outline-secondary">
+      <i class="bi bi-arrow-down-up"></i> Journal des mouvements
+    </a>
+  </div>
 </div>
 
 {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}

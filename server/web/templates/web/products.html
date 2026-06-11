@@ -29,8 +29,14 @@
         <label class="form-check-label" for="low">Stock bas uniquement</label>
       </div>
     </div>
-    <div class="col-md-3">
-      <button class="btn btn-primary btn-sm w-100">Filtrer</button>
+    <div class="col-md-3 d-flex gap-2">
+      <button class="btn btn-primary btn-sm">Filtrer</button>
+      <button class="btn btn-success btn-sm" name="export" value="xlsx" formnovalidate title="Exporter en Excel">
+        <i class="bi bi-file-earmark-excel"></i> Excel
+      </button>
+      <button class="btn btn-danger btn-sm" name="export" value="pdf" formnovalidate title="Exporter en PDF">
+        <i class="bi bi-file-earmark-pdf"></i> PDF
+      </button>
     </div>
   </div>
 </form>

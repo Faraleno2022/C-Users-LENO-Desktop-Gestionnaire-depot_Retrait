@@ -18,6 +18,28 @@ from django.utils.dateparse import parse_date
 
 from sync.models import AuditLog, Client, Product, RemoteUser, Sale, StockMovement, Transaction
 from web import reports as web_reports
+from web.reports import build_excel, build_pdf, _fmt_money, _fmt_num
+
+
+def _export_response(fmt: str, slug: str, title: str, headers, rows, subtitle: str = ""):
+    """Construit une réponse HTTP de téléchargement Excel (xlsx) ou PDF.
+
+    `fmt` vaut "xlsx" ou "pdf". `slug` sert de base au nom de fichier.
+    """
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if fmt == "xlsx":
+        excel_title = f"{title} ({subtitle})" if subtitle else title
+        content = build_excel(excel_title, headers, rows)
+        resp = HttpResponse(
+            content,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resp["Content-Disposition"] = f'attachment; filename="{slug}_{ts}.xlsx"'
+        return resp
+    content = build_pdf(title, headers, rows, subtitle=subtitle)
+    resp = HttpResponse(content, content_type="application/pdf")
+    resp["Content-Disposition"] = f'attachment; filename="{slug}_{ts}.pdf"'
+    return resp
 
 
 PAGE_SIZE = 50
@@ -554,6 +576,23 @@ def transactions(request):
         qs = qs.filter(agent_nom__icontains=agent)
 
     qs = qs.order_by("-created_at")
+
+    export = (request.GET.get("export") or "").strip()
+    if export in ("xlsx", "pdf"):
+        headers = ["Date", "Matricule", "Téléphone", "Type", "Montant",
+                   "Solde après", "Agent", "Note"]
+        rows = [[
+            t.created_at, t.matricule, t.telephone or "",
+            "Dépôt" if t.type == "depot" else "Retrait",
+            _fmt_money(t.montant), _fmt_money(t.solde_apres),
+            t.agent_nom or "", t.note or "",
+        ] for t in qs]
+        sub = "Dépôts / Retraits"
+        if date_from or date_to:
+            sub += f" — du {date_from or '…'} au {date_to or '…'}"
+        return _export_response(export, "depots_retraits", "Dépôts / Retraits",
+                                headers, rows, subtitle=sub)
+
     total_depots = qs.filter(type="depot").aggregate(s=Sum("montant"))["s"] or 0
     total_retraits = qs.filter(type="retrait").aggregate(s=Sum("montant"))["s"] or 0
     n_total = qs.count()
@@ -593,6 +632,21 @@ def sales(request):
         qs = qs.filter(created_at__lte=f"{date_to} 23:59:59")
 
     qs = qs.order_by("-created_at")
+
+    export = (request.GET.get("export") or "").strip()
+    if export in ("xlsx", "pdf"):
+        headers = ["Date", "Matricule", "Produit", "Qté", "Prix unit.",
+                   "Total", "Solde après", "Agent"]
+        rows = [[
+            s.created_at, s.matricule, s.product_nom, _fmt_num(s.quantite),
+            _fmt_money(s.prix_unitaire), _fmt_money(s.montant_total),
+            _fmt_money(s.solde_apres), s.agent_nom or "",
+        ] for s in qs]
+        sub = "Ventes"
+        if date_from or date_to:
+            sub += f" — du {date_from or '…'} au {date_to or '…'}"
+        return _export_response(export, "ventes", "Ventes", headers, rows, subtitle=sub)
+
     total = qs.aggregate(s=Sum("montant_total"))["s"] or 0
     n_total = qs.count()
     page_obj = _paginate(request, qs)
@@ -621,6 +675,28 @@ def products(request):
     if only_low:
         qs = qs.filter(quantite_stock__lte=F("seuil_alerte"))
     qs = qs.order_by("nom")
+
+    export = (request.GET.get("export") or "").strip()
+    if export in ("xlsx", "pdf"):
+        headers = ["Référence", "Nom", "Prix unit.", "Stock", "Seuil",
+                   "Valeur", "Statut"]
+        rows = []
+        for p in qs:
+            if not p.actif:
+                statut = "Inactif"
+            elif (p.quantite_stock or 0) <= (p.seuil_alerte or 0):
+                statut = "Stock bas"
+            else:
+                statut = "OK"
+            rows.append([
+                p.reference or "", p.nom, _fmt_money(p.prix_unitaire),
+                _fmt_num(p.quantite_stock), _fmt_num(p.seuil_alerte),
+                _fmt_money((p.quantite_stock or 0) * (p.prix_unitaire or 0)), statut,
+            ])
+        return _export_response(export, "produits_stock", "Produits & Stock",
+                                headers, rows,
+                                subtitle=f"Au {_iso_now()}")
+
     page_obj = _paginate(request, qs)
     # Pré-calcule la valeur stock (quantite × prix) car le filtre money ne sait pas multiplier.
     for p in page_obj:
@@ -846,6 +922,23 @@ def stock_movements(request):
         qs = qs.filter(agent_nom__icontains=agent)
 
     qs = qs.order_by("-created_at", "-id")
+
+    export = (request.GET.get("export") or "").strip()
+    if export in ("xlsx", "pdf"):
+        headers = ["Date", "Produit", "Type", "Quantité", "Stock après",
+                   "Motif", "Agent"]
+        rows = [[
+            m.created_at, m.product_nom,
+            "Entrée" if m.type == "entree" else "Sortie",
+            _fmt_num(m.quantite), _fmt_num(m.stock_apres),
+            m.motif or "", m.agent_nom or "",
+        ] for m in qs]
+        sub = "Mouvements de stock"
+        if date_from or date_to:
+            sub += f" — du {date_from or '…'} au {date_to or '…'}"
+        return _export_response(export, "mouvements_stock", "Mouvements de stock",
+                                headers, rows, subtitle=sub)
+
     total_entrees = qs.filter(type="entree").aggregate(s=Sum("quantite"))["s"] or 0
     total_sorties = qs.filter(type="sortie").aggregate(s=Sum("quantite"))["s"] or 0
     n_total = qs.count()
@@ -933,6 +1026,19 @@ def inventory(request):
             return redirect("web:inventory")
         except (ValueError, TypeError) as e:
             error = str(e)
+
+    # Export de la feuille de comptage (stock théorique + colonnes à remplir).
+    export = (request.GET.get("export") or "").strip()
+    if export in ("xlsx", "pdf"):
+        headers = ["Référence", "Produit", "Prix unit.", "Stock théorique",
+                   "Stock compté", "Écart", "Valeur"]
+        rows = [[
+            p.reference or "", p.nom, _fmt_money(p.prix_unitaire),
+            _fmt_num(p.quantite_stock), "", "",
+            _fmt_money((p.quantite_stock or 0) * (p.prix_unitaire or 0)),
+        ] for p in products]
+        return _export_response(export, "inventaire", "Feuille d'inventaire",
+                                headers, rows, subtitle=f"Au {_iso_now()}")
 
     # Valorisation courante du stock.
     for p in products:

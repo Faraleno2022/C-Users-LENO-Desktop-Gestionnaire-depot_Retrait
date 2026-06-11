@@ -26,8 +26,14 @@
       <label class="form-label small">Au</label>
       <input type="date" name="date_to" value="{{ filters.date_to }}" class="form-control form-control-sm">
     </div>
-    <div class="col-md-2 d-flex align-items-end">
-      <button class="btn btn-primary btn-sm w-100">Filtrer</button>
+    <div class="col-12 col-md-auto d-flex align-items-end gap-2">
+      <button class="btn btn-primary btn-sm">Filtrer</button>
+      <button class="btn btn-success btn-sm" name="export" value="xlsx" formnovalidate title="Exporter en Excel">
+        <i class="bi bi-file-earmark-excel"></i> Excel
+      </button>
+      <button class="btn btn-danger btn-sm" name="export" value="pdf" formnovalidate title="Exporter en PDF">
+        <i class="bi bi-file-earmark-pdf"></i> PDF
+      </button>
     </div>
   </div>
 </form>
