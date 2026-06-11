@@ -7,9 +7,8 @@
   <div class="col-12 col-lg-7">
     <h1 class="h3 mb-3"><i class="bi bi-arrow-down-circle text-success"></i> Nouveau dépôt</h1>
     <p class="text-muted">
-      Le dépôt sera enregistré côté serveur et synchronisé vers les postes à la prochaine sync.
-      Seuls les dépôts sont autorisés en ligne ; retraits et ventes restent réservés au poste
-      pour éviter tout risque de double-débit.
+      Saisissez le matricule : les informations du client et son solde global se chargent
+      automatiquement. Renseignez ensuite le montant et validez — le solde est mis à jour.
     </p>
 
     {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
@@ -17,22 +16,42 @@
       {% for m in messages %}<div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>{% endfor %}
     {% endif %}
 
-    <form method="post" class="card p-4 shadow-sm">
+    <form method="post" class="card p-4 shadow-sm"
+          data-balance-url="{% url 'web:matricule_balance_api' %}">
       {% csrf_token %}
 
-      <div class="mb-3">
-        <label class="form-label">Matricule du client <span class="text-danger">*</span></label>
-        <input type="text" name="matricule" class="form-control" required autofocus placeholder="MAT-001">
+      <div class="row g-2">
+        <div class="col-sm-6 mb-2">
+          <label class="form-label">Matricule du client <span class="text-danger">*</span></label>
+          <input type="text" name="matricule" id="matricule" class="form-control" required
+                 autofocus autocomplete="off" placeholder="MAT-001">
+        </div>
+        <div class="col-sm-6 mb-2">
+          <label class="form-label">Téléphone</label>
+          <input type="text" name="telephone" id="telephone" class="form-control" placeholder="+224 …">
+        </div>
       </div>
 
-      <div class="mb-3">
-        <label class="form-label">Téléphone</label>
-        <input type="text" name="telephone" class="form-control" placeholder="+224 …">
+      {# ---------- Solde client (chargé en temps réel) ---------- #}
+      <div class="card bg-light border-0 p-3 mb-3" id="balanceBox" style="display:none;">
+        <div class="d-flex justify-content-between">
+          <span>Solde actuel <span id="balanceClientNom" class="text-muted"></span></span>
+          <strong id="balanceCurrent">—</strong>
+        </div>
+        <div class="d-flex justify-content-between">
+          <span>Montant du dépôt</span>
+          <strong id="balanceDepot" class="text-success">—</strong>
+        </div>
+        <hr class="my-2">
+        <div class="d-flex justify-content-between">
+          <span class="fw-bold">Solde après dépôt</span>
+          <strong id="balanceAfter" class="fs-5 text-success">—</strong>
+        </div>
       </div>
 
       <div class="mb-3">
         <label class="form-label">Montant (GNF) <span class="text-danger">*</span></label>
-        <input type="number" step="1" min="1" name="montant" class="form-control form-control-lg" required>
+        <input type="number" step="1" min="1" name="montant" id="montant" class="form-control form-control-lg" required>
       </div>
 
       <div class="mb-3">
@@ -49,6 +68,55 @@
         <i class="bi bi-check-lg"></i> Valider le dépôt
       </button>
     </form>
+
+    <script>
+      (function () {
+        var form = document.querySelector('form[data-balance-url]');
+        var balanceUrl = form.getAttribute('data-balance-url');
+        var matInput = document.getElementById('matricule');
+        var telInput = document.getElementById('telephone');
+        var montant = document.getElementById('montant');
+        var clientBalance = null;
+
+        function fmt(n) { return Math.round(n).toLocaleString('fr-FR').replace(/,/g, ' '); }
+        function money(n) { return fmt(n) + ' GNF'; }
+
+        function refresh() {
+          var box = document.getElementById('balanceBox');
+          if (clientBalance === null) { box.style.display = 'none'; return; }
+          box.style.display = 'block';
+          var dep = parseFloat(montant.value) || 0;
+          document.getElementById('balanceCurrent').textContent = money(clientBalance);
+          document.getElementById('balanceDepot').textContent = dep > 0 ? '+ ' + money(dep) : '—';
+          document.getElementById('balanceAfter').textContent = money(clientBalance + dep);
+        }
+
+        var timer = null;
+        function loadBalance() {
+          var mat = matInput.value.trim();
+          if (!mat) { clientBalance = null; refresh(); return; }
+          fetch(balanceUrl + '?matricule=' + encodeURIComponent(mat), {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+          })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              clientBalance = d.balance;
+              var nom = document.getElementById('balanceClientNom');
+              nom.textContent = d.found ? (d.nom ? '· ' + d.nom : '') : '· (matricule inconnu)';
+              if (d.found && d.telephone && !telInput.value) telInput.value = d.telephone;
+              refresh();
+            })
+            .catch(function () { clientBalance = null; refresh(); });
+        }
+
+        matInput.addEventListener('input', function () {
+          clearTimeout(timer); timer = setTimeout(loadBalance, 350);
+        });
+        matInput.addEventListener('change', loadBalance);
+        montant.addEventListener('input', refresh);
+        if (matInput.value.trim()) loadBalance();
+      })();
+    </script>
   </div>
 
   <div class="col-12 col-lg-5">
@@ -68,9 +136,15 @@
           <tr><th>Nouveau solde</th><td><strong>{{ last_receipt.solde_apres|money }}</strong></td></tr>
           <tr><th>Agent</th><td>{{ last_receipt.agent_nom }}</td></tr>
         </table>
-        <button onclick="window.print()" class="btn btn-outline-secondary btn-sm">
-          <i class="bi bi-printer"></i> Imprimer
-        </button>
+        <div class="d-grid gap-2">
+          <a href="{% url 'web:transactions' %}?matricule={{ last_receipt.matricule|urlencode }}"
+             class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-clock-history"></i> Historique des transactions du client
+          </a>
+          <button onclick="window.print()" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-printer"></i> Imprimer
+          </button>
+        </div>
       </div>
     {% else %}
       <div class="card p-4 text-center text-muted">
