@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QAction, QFont, QIcon
+from PySide6.QtGui import QAction, QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -35,21 +35,34 @@ from app.ui.backup_view import BackupView
 from app.ui.widgets.sync_status import SyncStatusWidget
 
 
-NAV_ITEMS = [
-    ("dashboard", "Tableau de bord", None),
-    ("transactions", "Dépôt / Retrait", None),
-    ("sales", "Vente produit", None),
-    ("products", "Produits & Stock", None),
-    ("clients", "Clients", None),
-    ("history", "Historique", None),
-    ("users", "Utilisateurs", ("admin", "super_admin")),
-    ("admins", "Administrateurs", ("super_admin",)),
-    ("reports", "Rapports", None),
-    ("backup", "Administration", ("admin", "super_admin")),
+# Navigation organisée en sections — même présentation que la console web :
+# Vue d'ensemble / Opérations / Historique / Gestion / Administration.
+# Chaque entrée : (clé, libellé, rôles autorisés ou None, couleur texte ou None)
+NAV_SECTIONS = [
+    ("Vue d'ensemble", [
+        ("dashboard", "Tableau de bord", None, None),
+    ]),
+    ("Opérations", [
+        ("transactions", "Dépôt / Retrait", None, "#86efac"),
+        ("sales", "Vente produit", None, "#67e8f9"),
+    ]),
+    ("Historique", [
+        ("history", "Historique", None, None),
+    ]),
+    ("Gestion", [
+        ("products", "Produits & Stock", None, None),
+        ("clients", "Clients", None, None),
+        ("reports", "Rapports", None, None),
+    ]),
+    ("Administration", [
+        ("users", "Utilisateurs", ("admin", "super_admin"), None),
+        ("admins", "Administrateurs", ("super_admin",), None),
+        ("backup", "Sauvegarde & Sync", ("admin", "super_admin"), None),
+    ]),
 ]
 
 
-SIDEBAR_WIDTH = 220
+SIDEBAR_WIDTH = 240
 SIDEBAR_COLLAPSE_THRESHOLD = 900  # En dessous, on replie la barre latérale automatiquement
 
 
@@ -80,9 +93,10 @@ class MainWindow(QMainWindow):
         sb_layout.setContentsMargins(0, 0, 0, 0)
         sb_layout.setSpacing(0)
 
-        header = QLabel(APP_NAME)
+        # Marque — identique à la console web (sidebar-brand)
+        header = QLabel("EMAB GROUP")
         header.setStyleSheet(
-            "color: white; padding: 18px 16px; font-weight: 700; font-size: 14px;"
+            "color: white; padding: 18px 19px; font-weight: 700; font-size: 15px;"
             " background: #0b1220; border-bottom: 1px solid #1f2937;"
         )
         header.setWordWrap(True)
@@ -154,23 +168,47 @@ class MainWindow(QMainWindow):
         self.views["reports"] = ReportsView(self.user)
         self.views["backup"] = BackupView(self.user, on_data_changed=self._on_data_changed)
 
-        # --- Build nav based on role -----------------------------------
+        # --- Build nav based on role (sections comme la console web) ----
         self.nav_keys: list = []
-        for key, label, roles in NAV_ITEMS:
-            if roles is not None and self.user.role not in roles:
+        section_font = QFont("Segoe UI", 8)
+        section_font.setBold(True)
+        section_font.setLetterSpacing(QFont.PercentageSpacing, 108)
+        for section_label, entries in NAV_SECTIONS:
+            visible = [
+                (key, label, color)
+                for key, label, roles, color in entries
+                if roles is None or self.user.role in roles
+            ]
+            if not visible:
                 continue
-            item = QListWidgetItem(label)
-            self.nav.addItem(item)
-            self.stack.addWidget(self.views[key])
-            self.nav_keys.append(key)
+            # En-tête de section : non sélectionnable, gris, majuscules
+            section_item = QListWidgetItem(section_label.upper())
+            section_item.setFlags(Qt.NoItemFlags)
+            section_item.setFont(section_font)
+            section_item.setForeground(QColor("#6b7280"))
+            self.nav.addItem(section_item)
+            self.nav_keys.append("__section__")
+            for key, label, color in visible:
+                item = QListWidgetItem(label)
+                if color:
+                    item.setForeground(QColor(color))
+                self.nav.addItem(item)
+                self.stack.addWidget(self.views[key])
+                self.nav_keys.append(key)
 
-        # Logout entry
+        # Logout entry (rouge clair, comme le lien du pied de page web)
         logout_item = QListWidgetItem("Se déconnecter")
+        logout_item.setForeground(QColor("#fca5a5"))
         self.nav.addItem(logout_item)
         self.nav_keys.append("__logout__")
 
         self.nav.currentRowChanged.connect(self._on_nav_changed)
-        self.nav.setCurrentRow(0)
+        # Sélectionne la première vraie entrée (la ligne 0 est un en-tête de section)
+        first_row = next(
+            (i for i, k in enumerate(self.nav_keys) if k not in ("__section__", "__logout__")),
+            0,
+        )
+        self.nav.setCurrentRow(first_row)
 
         # Status bar
         sb = QStatusBar()
@@ -193,6 +231,8 @@ class MainWindow(QMainWindow):
         if row < 0 or row >= len(self.nav_keys):
             return
         key = self.nav_keys[row]
+        if key == "__section__":
+            return
         if key == "__logout__":
             self._logout()
             return

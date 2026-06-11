@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.config import APP_NAME, APP_VERSION
+from app.config import APP_NAME, APP_VERSION, LOGO_PATH
 from app.services import auth_service
 
 
@@ -33,13 +33,22 @@ class LoginWindow(QDialog):
         layout.setContentsMargins(40, 40, 40, 40)
         layout.setSpacing(14)
 
-        title = QLabel(APP_NAME)
-        title.setAlignment(Qt.AlignCenter)
-        title.setProperty("class", "h1")
-        title.setFont(QFont("Segoe UI", 18, QFont.Bold))
-        layout.addWidget(title)
+        # Logo EMAB GROUP — même présentation que la page de connexion web
+        if LOGO_PATH.exists():
+            logo = QLabel()
+            pix = QPixmap(str(LOGO_PATH))
+            if not pix.isNull():
+                logo.setPixmap(pix.scaledToWidth(240, Qt.SmoothTransformation))
+            logo.setAlignment(Qt.AlignCenter)
+            layout.addWidget(logo)
+        else:
+            title = QLabel("EMAB GROUP")
+            title.setAlignment(Qt.AlignCenter)
+            title.setProperty("class", "h1")
+            title.setFont(QFont("Segoe UI", 18, QFont.Bold))
+            layout.addWidget(title)
 
-        subtitle = QLabel("Connectez-vous pour continuer")
+        subtitle = QLabel("Connectez-vous avec vos identifiants poste")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setProperty("class", "muted")
         layout.addWidget(subtitle)
