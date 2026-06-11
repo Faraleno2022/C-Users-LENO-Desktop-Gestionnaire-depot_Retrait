@@ -107,7 +107,8 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
+# Surclassable par env (mode console locale empaquetée : fichiers dans le bundle)
+STATIC_ROOT = Path(os.environ.get("DJANGO_STATIC_ROOT", BASE_DIR / "staticfiles"))
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
@@ -131,5 +132,6 @@ REST_FRAMEWORK = {
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     SECURE_SSL_REDIRECT = _env_bool("DJANGO_SECURE_SSL_REDIRECT", default=True)
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
+    # Cookies "secure" désactivables pour la console locale servie en http://127.0.0.1
+    SESSION_COOKIE_SECURE = _env_bool("DJANGO_COOKIE_SECURE", default=True)
+    CSRF_COOKIE_SECURE = _env_bool("DJANGO_COOKIE_SECURE", default=True)
