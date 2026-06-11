@@ -1,0 +1,111 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Corbeille{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center mb-3">
+  <h1 class="h3 me-3 mb-0"><i class="bi bi-trash"></i> Corbeille</h1>
+  <span class="text-muted">{{ n_tx|num }} opération(s) · {{ n_sales|num }} vente(s)</span>
+</div>
+
+{% if messages %}
+  {% for m in messages %}<div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>{% endfor %}
+{% endif %}
+
+<div class="alert alert-info small">
+  <i class="bi bi-info-circle"></i>
+  Les éléments supprimés ne comptent plus dans les soldes ni dans les rapports.
+  La restauration les réintègre immédiatement. Toutes les actions sont tracées
+  au journal d'audit.
+</div>
+
+<h2 class="h5 mt-4 mb-2">Dépôts / Retraits supprimés</h2>
+<div class="card shadow-sm mb-4">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Matricule</th>
+          <th>Type</th>
+          <th class="text-end">Montant</th>
+          <th>Agent</th>
+          <th>Note</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for tx in deleted_tx %}
+          <tr>
+            <td>{{ tx.created_at }}</td>
+            <td>{{ tx.matricule }}</td>
+            <td>
+              {% if tx.type == "depot" %}
+                <span class="badge badge-depot">Dépôt</span>
+              {% else %}
+                <span class="badge badge-retrait">Retrait</span>
+              {% endif %}
+            </td>
+            <td class="text-end">{{ tx.montant|money }}</td>
+            <td>{{ tx.agent_nom }}</td>
+            <td>{{ tx.note|default:"—" }}</td>
+            <td class="text-end">
+              <form method="post" action="{% url 'web:transaction_restore' tx.pk %}" class="d-inline"
+                    onsubmit="return confirm('Restaurer cette opération ? Le solde du client sera recalculé.');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-success" title="Restaurer">
+                  <i class="bi bi-arrow-counterclockwise"></i> Restaurer
+                </button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="7" class="text-center text-muted py-4">Aucune opération dans la corbeille.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h2 class="h5 mb-2">Ventes supprimées</h2>
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Matricule</th>
+          <th>Produit</th>
+          <th class="text-end">Qté</th>
+          <th class="text-end">Montant</th>
+          <th>Agent</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in deleted_sales %}
+          <tr>
+            <td>{{ s.created_at }}</td>
+            <td>{{ s.matricule }}</td>
+            <td>{{ s.product_nom }}</td>
+            <td class="text-end">{{ s.quantite|num }}</td>
+            <td class="text-end">{{ s.montant_total|money }}</td>
+            <td>{{ s.agent_nom }}</td>
+            <td class="text-end">
+              <form method="post" action="{% url 'web:sale_restore' s.pk %}" class="d-inline"
+                    onsubmit="return confirm('Restaurer cette vente ? Le stock sera de nouveau décrémenté.');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-success" title="Restaurer">
+                  <i class="bi bi-arrow-counterclockwise"></i> Restaurer
+                </button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="7" class="text-center text-muted py-4">Aucune vente dans la corbeille.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -59,6 +59,10 @@ class RemoteUser(SyncedModel):
     # Hash bcrypt envoyé par le poste pour permettre l'authentification web avec les
     # mêmes identifiants que sur le bureau. Optionnel : un poste peut ne pas le pousser.
     password_hash = models.CharField(max_length=255, blank=True, default="")
+    # Permission propre à la console web (NON synchronisée depuis le poste) :
+    # autorise la suppression d'opérations. Les super_admin / admin l'ont d'office ;
+    # un admin peut l'accorder à un superviseur/caissier pour en faire un « responsable ».
+    can_delete = models.BooleanField(default=False)
     created_at = models.CharField(max_length=32)
     updated_at = models.CharField(max_length=32)
 

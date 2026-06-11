@@ -149,6 +149,11 @@
       <a href="{% url 'web:sales' %}" class="sidebar-link {% if request.resolver_match.url_name == 'sales' %}active{% endif %}">
         <i class="bi bi-receipt"></i> Ventes
       </a>
+      {% if request.session.remote_user.role == 'super_admin' or request.session.remote_user.role == 'admin' or request.session.remote_user.can_delete %}
+      <a href="{% url 'web:trash' %}" class="sidebar-link {% if request.resolver_match.url_name == 'trash' %}active{% endif %}">
+        <i class="bi bi-trash"></i> Corbeille
+      </a>
+      {% endif %}
 
       <div class="sidebar-section">Gestion</div>
       <a href="{% url 'web:products' %}" class="sidebar-link {% if request.resolver_match.url_name == 'products' %}active{% endif %}">

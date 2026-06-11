@@ -60,6 +60,7 @@ class RemoteUserBackend(BaseBackend):
                 "nom_complet": remote.nom_complet,
                 "role": remote.role,
                 "matricule": remote.matricule,
+                "can_delete": remote.role in ("super_admin", "admin") or bool(remote.can_delete),
             }
         return user
 

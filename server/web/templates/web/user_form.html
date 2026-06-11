@@ -46,6 +46,18 @@
         </select>
       </div>
 
+      <div class="form-check mb-3">
+        <input type="checkbox" class="form-check-input" name="can_delete" id="can_delete"
+               {% if target_user.can_delete %}checked{% endif %}>
+        <label class="form-check-label" for="can_delete">
+          <strong>Responsable autorisé à supprimer</strong>
+          <div class="text-muted small">
+            Peut envoyer des opérations (dépôts, retraits, ventes) à la corbeille et les
+            restaurer. Les administrateurs ont ce droit d'office.
+          </div>
+        </label>
+      </div>
+
       <div class="mb-3">
         <label class="form-label">
           Mot de passe {% if not target_user %}<span class="text-danger">*</span>{% else %}<small class="text-muted">(laisser vide pour ne pas changer)</small>{% endif %}

@@ -68,6 +68,35 @@ def role_required(*allowed_roles):
     return wrap
 
 
+def _can_delete(remote) -> bool:
+    """Vrai si l'utilisateur courant peut supprimer/restaurer des opérations.
+
+    Les super_admin / admin l'ont d'office. Un autre rôle ne l'a que si le flag
+    `can_delete` a été activé sur sa fiche (responsable autorisé).
+    """
+    remote = remote or {}
+    if remote.get("role") in ("super_admin", "admin"):
+        return True
+    ident = remote.get("identifiant")
+    if ident:
+        u = RemoteUser.objects.filter(identifiant=ident).order_by("-id").first()
+        if u and getattr(u, "can_delete", False):
+            return True
+    return False
+
+
+def delete_required(view):
+    """Décorateur : exige la permission de suppression (admin ou responsable autorisé)."""
+    @wraps(view)
+    def inner(request, *args, **kwargs):
+        if not _can_delete(request.session.get("remote_user") or {}):
+            return HttpResponseForbidden(
+                "Suppression réservée aux administrateurs et aux responsables autorisés."
+            )
+        return view(request, *args, **kwargs)
+    return inner
+
+
 def _iso_now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -569,6 +598,7 @@ def transactions(request):
             "agent": agent,
         },
         "remote": _remote(request),
+        "can_delete": _can_delete(_remote(request)),
     })
 
 
@@ -620,6 +650,7 @@ def sales(request):
             "date_to": date_to,
         },
         "remote": _remote(request),
+        "can_delete": _can_delete(_remote(request)),
     })
 
 
@@ -852,6 +883,138 @@ def product_toggle(request, pk):
             f"Produit « {product.nom} » {'activé' if product.actif else 'désactivé'}.",
         )
     return redirect("web:products")
+
+
+@login_required(login_url="web:login")
+@delete_required
+def transaction_delete(request, pk):
+    """Suppression douce d'une transaction (dépôt/retrait) → corbeille."""
+    tx = get_object_or_404(Transaction, pk=pk, deleted=False)
+    if request.method == "POST":
+        tx.deleted = True
+        tx.save()
+        _log_audit(
+            request, "transaction_delete", target_type="transaction", target_id=tx.uuid,
+            details=f"{tx.type} matricule={tx.matricule} montant={tx.montant:.0f}",
+        )
+        messages.success(
+            request,
+            f"{'Dépôt' if tx.type == 'depot' else 'Retrait'} de {tx.montant:,.0f} GNF "
+            f"({tx.matricule}) envoyé à la corbeille. Le solde du client est recalculé.",
+        )
+    return redirect(request.POST.get("next") or "web:transactions")
+
+
+@login_required(login_url="web:login")
+@delete_required
+def transaction_restore(request, pk):
+    """Restaure une transaction depuis la corbeille."""
+    tx = get_object_or_404(Transaction, pk=pk, deleted=True)
+    if request.method == "POST":
+        tx.deleted = False
+        tx.save()
+        _log_audit(
+            request, "transaction_restore", target_type="transaction", target_id=tx.uuid,
+            details=f"{tx.type} matricule={tx.matricule} montant={tx.montant:.0f}",
+        )
+        messages.success(
+            request,
+            f"{'Dépôt' if tx.type == 'depot' else 'Retrait'} de {tx.montant:,.0f} GNF "
+            f"({tx.matricule}) restauré.",
+        )
+    return redirect("web:trash")
+
+
+def _sale_product(sale):
+    """Retrouve le produit d'une vente (par uuid d'abord, sinon id serveur)."""
+    if sale.product_uuid:
+        p = Product.objects.filter(uuid=sale.product_uuid).first()
+        if p:
+            return p
+    return Product.objects.filter(pk=sale.product_id).first()
+
+
+@login_required(login_url="web:login")
+@delete_required
+def sale_delete(request, pk):
+    """Suppression douce d'une vente → corbeille. Le stock du produit est rendu."""
+    sale = get_object_or_404(Sale, pk=pk, deleted=False)
+    if request.method == "POST":
+        sale.deleted = True
+        sale.save()
+        # Rend la quantité au stock (mouvement d'annulation, traçable).
+        product = _sale_product(sale)
+        if product:
+            new_stock = float(product.quantite_stock or 0) + float(sale.quantite or 0)
+            product.quantite_stock = new_stock
+            product.updated_at = _iso_now()
+            product.save()
+            r = _remote(request)
+            StockMovement.objects.create(
+                uuid=str(uuid_mod.uuid4()),
+                product_id=product.id, product_uuid=product.uuid, product_nom=product.nom,
+                type="entree", quantite=float(sale.quantite or 0), stock_apres=new_stock,
+                motif=f"Annulation vente N°{sale.id} ({sale.matricule})", sale_id=sale.id,
+                agent_id=None, agent_uuid="", agent_nom=r.get("nom_complet") or "",
+                created_at=_iso_now(),
+            )
+        _log_audit(
+            request, "sale_delete", target_type="sale", target_id=sale.uuid,
+            details=f"{sale.product_nom} x{sale.quantite:g} matricule={sale.matricule} "
+                    f"montant={sale.montant_total:.0f}",
+        )
+        messages.success(
+            request,
+            f"Vente « {sale.product_nom} » ({sale.matricule}) envoyée à la corbeille. "
+            f"Stock rendu et solde recalculé.",
+        )
+    return redirect(request.POST.get("next") or "web:sales")
+
+
+@login_required(login_url="web:login")
+@delete_required
+def sale_restore(request, pk):
+    """Restaure une vente depuis la corbeille. Le stock est de nouveau décrémenté."""
+    sale = get_object_or_404(Sale, pk=pk, deleted=True)
+    if request.method == "POST":
+        sale.deleted = False
+        sale.save()
+        product = _sale_product(sale)
+        if product:
+            new_stock = float(product.quantite_stock or 0) - float(sale.quantite or 0)
+            product.quantite_stock = new_stock
+            product.updated_at = _iso_now()
+            product.save()
+            r = _remote(request)
+            StockMovement.objects.create(
+                uuid=str(uuid_mod.uuid4()),
+                product_id=product.id, product_uuid=product.uuid, product_nom=product.nom,
+                type="sortie", quantite=float(sale.quantite or 0), stock_apres=new_stock,
+                motif=f"Rétablissement vente N°{sale.id} ({sale.matricule})", sale_id=sale.id,
+                agent_id=None, agent_uuid="", agent_nom=r.get("nom_complet") or "",
+                created_at=_iso_now(),
+            )
+        _log_audit(
+            request, "sale_restore", target_type="sale", target_id=sale.uuid,
+            details=f"{sale.product_nom} x{sale.quantite:g} matricule={sale.matricule}",
+        )
+        messages.success(request, f"Vente « {sale.product_nom} » ({sale.matricule}) restaurée.")
+    return redirect("web:trash")
+
+
+@login_required(login_url="web:login")
+@delete_required
+def trash(request):
+    """Corbeille : transactions et ventes supprimées, restaurables."""
+    deleted_tx = Transaction.objects.filter(deleted=True).order_by("-created_at", "-id")[:100]
+    deleted_sales = Sale.objects.filter(deleted=True).order_by("-created_at", "-id")[:100]
+    return render(request, "web/trash.html", {
+        "deleted_tx": deleted_tx,
+        "deleted_sales": deleted_sales,
+        "n_tx": Transaction.objects.filter(deleted=True).count(),
+        "n_sales": Sale.objects.filter(deleted=True).count(),
+        "remote": _remote(request),
+    })
 
 
 @login_required(login_url="web:login")
@@ -1316,6 +1479,7 @@ def _user_form_post(request, user=None):
     telephone = (request.POST.get("telephone") or "").strip()
     role = (request.POST.get("role") or "").strip()
     password = request.POST.get("password") or ""
+    can_delete = request.POST.get("can_delete") == "on"
 
     if not identifiant or not nom_complet:
         raise ValueError("Identifiant et nom complet sont obligatoires.")
@@ -1332,6 +1496,7 @@ def _user_form_post(request, user=None):
             uuid=str(uuid_mod.uuid4()),
             identifiant=identifiant, nom_complet=nom_complet, matricule=matricule,
             telephone=telephone, role=role, actif=True,
+            can_delete=can_delete,
             password_hash=_hash_password(password),
             created_at=now, updated_at=now,
         )
@@ -1346,6 +1511,7 @@ def _user_form_post(request, user=None):
         user.matricule = matricule
         user.telephone = telephone
         user.role = role
+        user.can_delete = can_delete
         if password:
             user.password_hash = _hash_password(password)
         user.updated_at = now
