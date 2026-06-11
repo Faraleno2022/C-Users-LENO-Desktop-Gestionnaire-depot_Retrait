@@ -1,19 +1,17 @@
 {% extends "web/base.html" %}
 {% load money %}
-{% block title %}Nouveau retrait{% endblock %}
+{% block title %}Retrait / Vente{% endblock %}
 
 {% block content %}
 <div class="row">
   <div class="col-12 col-lg-7">
-    <h1 class="h3 mb-3"><i class="bi bi-arrow-up-circle text-danger"></i> Nouveau retrait</h1>
+    <h1 class="h3 mb-3"><i class="bi bi-arrow-up-circle text-danger"></i> Retrait / Vente de produits</h1>
 
-    <div class="alert alert-warning border-warning border-2">
-      <strong><i class="bi bi-exclamation-triangle"></i> Avertissement risque double-débit</strong>
-      <p class="mb-1">Le solde affiché provient du <strong>serveur uniquement</strong>. Si le poste de
-      caisse a effectué des opérations <em>hors-ligne</em> sur ce matricule (qu'il n'a pas
-      encore poussées), elles ne sont pas visibles ici.</p>
-      <p class="mb-0">Le retrait pourrait donc rendre le solde réel négatif. Vérifiez le solde
-      <strong>au poste</strong> et synchronisez avant de continuer.</p>
+    <div class="alert alert-warning border-warning border-2 small">
+      <strong><i class="bi bi-exclamation-triangle"></i> Risque double-débit</strong> —
+      le solde affiché provient du <strong>serveur uniquement</strong>. Si le poste a
+      opéré hors-ligne sur ce matricule, le solde réel peut différer. Vérifiez au poste
+      et synchronisez avant de valider.
     </div>
 
     {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
@@ -21,43 +19,44 @@
       {% for m in messages %}<div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>{% endfor %}
     {% endif %}
 
-    <form method="get" class="mb-3">
-      <div class="input-group">
-        <input type="text" name="matricule" value="{{ matricule_preview }}" class="form-control" placeholder="MAT-001">
-        <button class="btn btn-outline-primary" type="submit">
-          <i class="bi bi-search"></i> Vérifier le solde
-        </button>
-      </div>
-    </form>
-
-    {% if matricule_preview %}
-      <div class="card p-3 mb-3 bg-light">
-        Solde serveur de <strong>{{ matricule_preview }}</strong> :
-        <strong class="{% if balance_preview < 0 %}text-danger{% else %}text-success{% endif %}">
-          {{ balance_preview|money }}
-        </strong>
-      </div>
-    {% endif %}
-
-    <form method="post" class="card p-4 shadow-sm">
+    <form method="post" class="card p-4 shadow-sm"
+          data-balance-url="{% url 'web:matricule_balance_api' %}">
       {% csrf_token %}
 
       <div class="row g-2">
-        <div class="col-sm-6 mb-3">
+        <div class="col-sm-6 mb-2">
           <label class="form-label">Matricule <span class="text-danger">*</span></label>
-          <input type="text" name="matricule" value="{{ matricule_preview }}" class="form-control" required>
+          <input type="text" name="matricule" id="matricule" value="{{ matricule_preview }}"
+                 class="form-control" placeholder="MAT-001" autocomplete="off" required>
         </div>
-        <div class="col-sm-6 mb-3">
+        <div class="col-sm-6 mb-2">
           <label class="form-label">Téléphone</label>
-          <input type="text" name="telephone" class="form-control">
+          <input type="text" name="telephone" id="telephone" class="form-control">
         </div>
       </div>
 
-      {# ---------- Produits (optionnel, multi-lignes) ---------- #}
-      <label class="form-label">Produits retirés</label>
+      {# ---------- Solde client (chargé en temps réel) ---------- #}
+      <div class="card bg-light border-0 p-3 mb-3" id="balanceBox" style="display:none;">
+        <div class="d-flex justify-content-between">
+          <span>Solde actuel <span id="balanceClientNom" class="text-muted"></span></span>
+          <strong id="balanceCurrent">—</strong>
+        </div>
+        <div class="d-flex justify-content-between">
+          <span>Total produits / retrait</span>
+          <strong id="balanceTotal" class="text-danger">—</strong>
+        </div>
+        <hr class="my-2">
+        <div class="d-flex justify-content-between">
+          <span class="fw-bold">Solde après opération</span>
+          <strong id="balanceAfter" class="fs-5">—</strong>
+        </div>
+      </div>
+
+      {# ---------- Produits (multi-lignes, calcul temps réel) ---------- #}
+      <label class="form-label">Produits vendus / retirés</label>
       <p class="text-muted small mb-2">
-        Ajoutez un ou plusieurs produits : le montant global se calcule automatiquement.
-        Laissez vide pour un retrait en espèces simple.
+        Chaque produit a son prix de vente. Le total se calcule automatiquement et
+        se déduit du solde du client. Laissez vide pour un retrait en espèces simple.
       </p>
 
       <div class="table-responsive">
@@ -73,11 +72,13 @@
           <tbody id="prodRows"></tbody>
           <tfoot>
             <tr>
-              <td colspan="4">
+              <td colspan="2">
                 <button type="button" class="btn btn-outline-secondary btn-sm" id="addRowBtn">
                   <i class="bi bi-plus-lg"></i> Ajouter un produit
                 </button>
               </td>
+              <td class="text-end fw-bold" id="grandTotalCell">—</td>
+              <td></td>
             </tr>
           </tfoot>
         </table>
@@ -87,7 +88,7 @@
         <label class="form-label">Montant total (GNF) <span class="text-danger">*</span></label>
         <input type="number" step="1" min="1" name="montant" id="montant"
                class="form-control form-control-lg fw-bold" required>
-        <div class="form-text" id="montantHelp">
+        <div class="form-text">
           Calculé depuis les produits, ou saisissez directement pour un retrait en espèces.
         </div>
       </div>
@@ -140,12 +141,29 @@
 
     <script>
       (function () {
+        var form = document.querySelector('form[data-balance-url]');
+        var balanceUrl = form.getAttribute('data-balance-url');
         var rowsBody = document.getElementById('prodRows');
         var tpl = document.getElementById('rowTemplate');
         var montant = document.getElementById('montant');
+        var matInput = document.getElementById('matricule');
+        var telInput = document.getElementById('telephone');
 
-        function fmt(n) {
-          return n.toLocaleString('fr-FR').replace(/,/g, ' ');
+        var clientBalance = null;  // null = inconnu tant que le matricule n'est pas chargé
+
+        function fmt(n) { return Math.round(n).toLocaleString('fr-FR').replace(/,/g, ' '); }
+        function money(n) { return fmt(n) + ' GNF'; }
+
+        function refreshBalanceBox(total) {
+          var box = document.getElementById('balanceBox');
+          if (clientBalance === null) { box.style.display = 'none'; return; }
+          box.style.display = 'block';
+          document.getElementById('balanceCurrent').textContent = money(clientBalance);
+          document.getElementById('balanceTotal').textContent = total > 0 ? '− ' + money(total) : '—';
+          var after = clientBalance - total;
+          var el = document.getElementById('balanceAfter');
+          el.textContent = money(after);
+          el.className = 'fs-5 ' + (after < 0 ? 'text-danger' : 'text-success');
         }
 
         function recompute() {
@@ -157,50 +175,77 @@
             var prix = parseFloat(opt && opt.dataset.prix) || 0;
             var qte = parseFloat(row.querySelector('.prod-qte').value) || 0;
             var sub = sel.value ? prix * qte : 0;
-            row.querySelector('.prod-subtotal').textContent =
-              sub > 0 ? fmt(sub) + ' GNF' : '—';
+            row.querySelector('.prod-subtotal').textContent = sub > 0 ? money(sub) : '—';
             if (sel.value) { hasProduct = true; grand += prix * qte; }
           });
-          // S'il y a au moins un produit sélectionné, le montant est piloté par les produits.
+          document.getElementById('grandTotalCell').textContent = grand > 0 ? money(grand) : '—';
+
+          var total;
           if (hasProduct) {
             montant.value = grand > 0 ? Math.round(grand) : '';
             montant.readOnly = true;
             montant.classList.add('bg-light');
+            total = grand;
           } else {
             montant.readOnly = false;
             montant.classList.remove('bg-light');
+            total = parseFloat(montant.value) || 0;
           }
+          refreshBalanceBox(total);
         }
+
+        // --- Chargement temps réel du solde quand le matricule change ---
+        var fetchTimer = null;
+        function loadBalance() {
+          var mat = matInput.value.trim();
+          if (!mat) { clientBalance = null; recompute(); return; }
+          fetch(balanceUrl + '?matricule=' + encodeURIComponent(mat), {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+          })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              clientBalance = d.balance;
+              var nom = document.getElementById('balanceClientNom');
+              nom.textContent = d.found ? (d.nom ? '· ' + d.nom : '') : '· (matricule inconnu)';
+              if (d.found && d.telephone && !telInput.value) telInput.value = d.telephone;
+              recompute();
+            })
+            .catch(function () { clientBalance = null; recompute(); });
+        }
+        matInput.addEventListener('input', function () {
+          clearTimeout(fetchTimer);
+          fetchTimer = setTimeout(loadBalance, 350);
+        });
+        matInput.addEventListener('change', loadBalance);
 
         function wireRow(row) {
           row.querySelector('.prod-select').addEventListener('change', recompute);
           row.querySelector('.prod-qte').addEventListener('input', recompute);
           row.querySelector('.remove-row').addEventListener('click', function () {
-            row.remove();
-            recompute();
+            row.remove(); recompute();
           });
         }
-
         function addRow() {
           var clone = tpl.content.firstElementChild.cloneNode(true);
           rowsBody.appendChild(clone);
           wireRow(clone);
           recompute();
         }
-
         document.getElementById('addRowBtn').addEventListener('click', addRow);
-        // Une ligne au départ pour guider l'utilisateur.
-        addRow();
+        montant.addEventListener('input', recompute);
+
+        addRow();                 // une ligne au départ
+        if (matInput.value.trim()) loadBalance();   // précharge si matricule déjà présent
       })();
     </script>
   </div>
 
   <div class="col-12 col-lg-5">
-    <h2 class="h5 mb-3">Dernier retrait enregistré</h2>
+    <h2 class="h5 mb-3">Dernière opération</h2>
     {% if last_receipt %}
       <div class="card p-4 shadow-sm border-danger" id="receipt">
         <div class="text-center border-bottom pb-2 mb-3" style="border-style:dashed!important;">
-          <div class="fw-bold">FICHE DE RETRAIT</div>
+          <div class="fw-bold">FACTURE / FICHE DE RETRAIT</div>
           <small class="text-muted">N° {{ last_receipt.id }} — {{ last_receipt.created_at }}</small>
         </div>
 
@@ -211,7 +256,7 @@
         </table>
 
         {% if last_receipt.lines %}
-          <div class="fw-bold small text-muted mt-1 mb-1">Produits retirés</div>
+          <div class="fw-bold small text-muted mt-1 mb-1">Produits</div>
           <table class="table table-sm">
             <thead>
               <tr><th>Produit</th><th class="text-center">Qté</th><th class="text-end">Sous-total</th></tr>
@@ -229,10 +274,7 @@
         {% endif %}
 
         <table class="table table-sm mb-3">
-          <tr>
-            <th>Solde avant</th>
-            <td class="text-end">{{ last_receipt.solde_avant|money }}</td>
-          </tr>
+          <tr><th>Solde avant</th><td class="text-end">{{ last_receipt.solde_avant|money }}</td></tr>
           <tr class="text-danger">
             <th>Montant du retrait</th>
             <td class="text-end fw-bold">−{{ last_receipt.montant|money }}</td>
@@ -243,14 +285,23 @@
           </tr>
         </table>
 
-        <button onclick="window.print()" class="btn btn-outline-secondary btn-sm">
-          <i class="bi bi-printer"></i> Imprimer la fiche
-        </button>
+        <div class="d-grid gap-2">
+          <a href="{% url 'web:withdrawal_invoice' %}" class="btn btn-danger">
+            <i class="bi bi-file-earmark-pdf"></i> Télécharger la facture (PDF)
+          </a>
+          <a href="{% url 'web:transactions' %}?matricule={{ last_receipt.matricule|urlencode }}"
+             class="btn btn-outline-primary">
+            <i class="bi bi-clock-history"></i> Historique des transactions du client
+          </a>
+          <button onclick="window.print()" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-printer"></i> Imprimer
+          </button>
+        </div>
       </div>
     {% else %}
       <div class="card p-4 text-center text-muted">
         <i class="bi bi-receipt" style="font-size:2rem;"></i>
-        <p class="mb-0 mt-2">La fiche apparaîtra ici après validation.</p>
+        <p class="mb-0 mt-2">La facture apparaîtra ici après validation.</p>
       </div>
     {% endif %}
   </div>

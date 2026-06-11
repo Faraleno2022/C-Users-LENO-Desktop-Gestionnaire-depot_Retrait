@@ -218,6 +218,96 @@ def _pdf_cell(value) -> str:
     return str(value)
 
 
+def build_withdrawal_invoice(data: dict) -> bytes:
+    """Génère une facture PDF pour un retrait / vente de produits.
+
+    `data` correspond à la structure stockée dans la session (`last_withdrawal`) :
+    id, matricule, telephone, agent_nom, created_at, solde_avant, montant,
+    solde_apres, lines[{product_nom, quantite, prix, total}].
+    """
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=18 * mm, rightMargin=18 * mm,
+        topMargin=16 * mm, bottomMargin=16 * mm,
+    )
+    styles = getSampleStyleSheet()
+    story = []
+
+    # En-tête société
+    story.append(Paragraph("<b>EMAB GROUP</b>", styles["Title"]))
+    story.append(Paragraph("Facture de retrait / vente de produits", styles["Heading2"]))
+    story.append(Spacer(1, 4 * mm))
+
+    # Métadonnées facture / client
+    meta = [
+        [f"Facture N° : {data.get('id', '')}", f"Date : {data.get('created_at', '')}"],
+        [f"Matricule : {data.get('matricule', '')}", f"Téléphone : {data.get('telephone') or '—'}"],
+        [f"Agent : {data.get('agent_nom') or '—'}", ""],
+    ]
+    mt = Table(meta, colWidths=[doc.width / 2.0, doc.width / 2.0])
+    mt.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(mt)
+    story.append(Spacer(1, 5 * mm))
+
+    # Lignes de produits
+    lines = data.get("lines") or []
+    if lines:
+        tbl = [["Produit", "Qté", "Prix unitaire", "Sous-total"]]
+        for l in lines:
+            tbl.append([
+                _pdf_cell(l.get("product_nom")),
+                _fmt_num(l.get("quantite")),
+                _fmt_money(l.get("prix")),
+                _fmt_money(l.get("total")),
+            ])
+        t = Table(
+            tbl,
+            colWidths=[doc.width * 0.46, doc.width * 0.14, doc.width * 0.20, doc.width * 0.20],
+            repeatRows=1,
+        )
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F4E78")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("ALIGN", (0, 0), (0, -1), "LEFT"),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 4 * mm))
+
+    # Récapitulatif des soldes
+    recap = [
+        ["Solde avant", _fmt_money(data.get("solde_avant"))],
+        ["Montant du retrait", "- " + _fmt_money(data.get("montant"))],
+        ["Solde restant", _fmt_money(data.get("solde_apres"))],
+    ]
+    rt = Table(recap, colWidths=[doc.width * 0.6, doc.width * 0.4])
+    rt.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("TEXTCOLOR", (0, 1), (-1, 1), colors.HexColor("#b00020")),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.5, colors.grey),
+        ("LINEABOVE", (0, -1), (-1, -1), 1, colors.black),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(rt)
+    story.append(Spacer(1, 12 * mm))
+    story.append(Paragraph("Merci de votre confiance — EMAB GROUP", styles["Italic"]))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
 # --- Façade : dataset + kind + format -> (filename, mime, bytes) -------------
 
 KIND_TITLES = {

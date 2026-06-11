@@ -139,10 +139,7 @@
         <i class="bi bi-arrow-down-circle"></i> Nouveau dépôt
       </a>
       <a href="{% url 'web:withdrawal_new' %}" class="sidebar-link action-danger {% if request.resolver_match.url_name == 'withdrawal_new' %}active{% endif %}">
-        <i class="bi bi-arrow-up-circle"></i> Nouveau retrait
-      </a>
-      <a href="{% url 'web:sale_new' %}" class="sidebar-link action-info {% if request.resolver_match.url_name == 'sale_new' %}active{% endif %}">
-        <i class="bi bi-cart-plus"></i> Nouvelle vente
+        <i class="bi bi-arrow-up-circle"></i> Retrait / Vente
       </a>
 
       <div class="sidebar-section">Historique</div>

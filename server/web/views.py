@@ -11,7 +11,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, F, Q, Sum
-from django.http import HttpResponse, HttpResponseForbidden
+from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -292,7 +292,9 @@ def withdrawal_new(request):
     """
     r = _remote(request)
     error = None
-    last_receipt = request.session.pop("last_withdrawal", None)
+    # On conserve la dernière opération en session (sans la retirer) pour
+    # permettre le téléchargement de la facture PDF et l'affichage de la fiche.
+    last_receipt = request.session.get("last_withdrawal")
     products = Product.objects.filter(actif=True).order_by("nom")
 
     balance_preview = None
@@ -447,112 +449,48 @@ def withdrawal_new(request):
 
 
 @login_required(login_url="web:login")
-def sale_new(request):
-    """Vente produit en ligne — décrémente stock + débit solde du matricule.
-
-    Risque double : (a) le poste peut avoir débité le matricule offline, (b)
-    le poste peut avoir vendu le même produit offline (stock divergent).
-    Avertissement explicite + double confirmation.
-    """
-    r = _remote(request)
-    error = None
-    last_receipt = request.session.pop("last_sale", None)
-    products = Product.objects.filter(actif=True).order_by("nom")
-
-    if request.method == "POST":
-        try:
-            product_id = int(request.POST.get("product_id") or 0)
-            product = Product.objects.filter(pk=product_id, actif=True).first()
-            if product is None:
-                raise ValueError("Produit invalide ou inactif.")
-            matricule = (request.POST.get("matricule") or "").strip()
-            if not matricule:
-                raise ValueError("Le matricule client est obligatoire.")
-            telephone = (request.POST.get("telephone") or "").strip()
-            note = (request.POST.get("note") or "").strip()
-            qte_raw = (request.POST.get("quantite") or "").strip()
-            quantite = float(qte_raw)
-            if quantite <= 0:
-                raise ValueError("La quantité doit être strictement positive.")
-            confirmed = request.POST.get("confirmed") == "1"
-            if not confirmed:
-                raise ValueError(
-                    "Vous devez confirmer avoir vérifié solde et stock avec le poste."
-                )
-
-            current_stock = float(product.quantite_stock or 0)
-            if quantite > current_stock:
-                raise ValueError(
-                    f"Stock insuffisant côté serveur : disponible {current_stock:g}, "
-                    f"vente demandée {quantite:g}."
-                )
-            prix = float(product.prix_unitaire or 0)
-            montant_total = prix * quantite
-
-            current_balance = _matricule_balance(matricule)
-            if montant_total > current_balance:
-                raise ValueError(
-                    f"Solde insuffisant côté serveur : disponible "
-                    f"{current_balance:,.0f} GNF, vente {montant_total:,.0f} GNF."
-                )
-            new_balance = current_balance - montant_total
-            new_stock = current_stock - quantite
-
-            agent = None
-            ident = r.get("identifiant")
-            if ident:
-                agent = RemoteUser.objects.filter(identifiant=ident).order_by("-id").first()
-
-            sale = Sale.objects.create(
-                uuid=str(uuid_mod.uuid4()),
-                matricule=matricule, telephone=telephone,
-                product_id=product.id, product_uuid=product.uuid, product_nom=product.nom,
-                quantite=quantite, prix_unitaire=prix, montant_total=montant_total,
-                solde_apres=new_balance,
-                agent_id=(agent.id if agent else None),
-                agent_uuid=(agent.uuid if agent else ""),
-                agent_nom=(agent.nom_complet if agent else r.get("nom_complet") or ""),
-                note=note, created_at=_iso_now(), deleted=False,
-            )
-            # Met à jour le stock et crée le mouvement
-            product.quantite_stock = new_stock
-            product.updated_at = _iso_now()
-            product.save()
-            StockMovement.objects.create(
-                uuid=str(uuid_mod.uuid4()),
-                product_id=product.id, product_uuid=product.uuid, product_nom=product.nom,
-                type="sortie", quantite=quantite, stock_apres=new_stock,
-                motif="Vente en ligne", sale_id=sale.id,
-                agent_id=(agent.id if agent else None),
-                agent_uuid=(agent.uuid if agent else ""),
-                agent_nom=(agent.nom_complet if agent else r.get("nom_complet") or ""),
-                created_at=_iso_now(),
-            )
-            _log_audit(
-                request, "sale_create", target_type="sale", target_id=sale.uuid,
-                details=f"{product.nom} x{quantite:g} = {montant_total:.0f} pour {matricule}",
-            )
-            messages.success(
-                request,
-                f"Vente enregistrée : {product.nom} x {quantite:g} = {montant_total:,.0f} GNF. "
-                f"Stock restant : {new_stock:g}. Nouveau solde du client : {new_balance:,.0f} GNF.",
-            )
-            request.session["last_sale"] = {
-                "id": sale.id, "matricule": matricule, "product_nom": product.nom,
-                "quantite": quantite, "prix": prix, "montant_total": montant_total,
-                "solde_apres": new_balance, "new_stock": new_stock,
-                "created_at": sale.created_at, "agent_nom": sale.agent_nom,
-            }
-            return redirect("web:sale_new")
-        except (ValueError, TypeError) as e:
-            error = str(e)
-
-    return render(request, "web/sale_form.html", {
-        "error": error,
-        "remote": r,
-        "products": products,
-        "last_receipt": last_receipt,
+def matricule_balance_api(request):
+    """Renvoie en JSON le solde serveur d'un matricule (chargement temps réel)."""
+    matricule = (request.GET.get("matricule") or "").strip()
+    if not matricule:
+        return JsonResponse({"matricule": "", "balance": 0.0, "found": False})
+    balance = _matricule_balance(matricule)
+    client = Client.objects.filter(matricule=matricule).first()
+    found = (
+        client is not None
+        or Transaction.objects.filter(matricule=matricule, deleted=False).exists()
+    )
+    return JsonResponse({
+        "matricule": matricule,
+        "balance": balance,
+        "found": found,
+        "nom": client.nom if client else "",
+        "telephone": client.telephone if client else "",
     })
+
+
+@login_required(login_url="web:login")
+def withdrawal_invoice(request):
+    """Télécharge la facture PDF du dernier retrait enregistré (depuis la session)."""
+    data = request.session.get("last_withdrawal")
+    if not data:
+        messages.warning(request, "Aucune facture récente à télécharger.")
+        return redirect("web:withdrawal_new")
+    content = web_reports.build_withdrawal_invoice(data)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    mat = (data.get("matricule") or "client").replace(" ", "_")
+    resp = HttpResponse(content, content_type="application/pdf")
+    resp["Content-Disposition"] = f'attachment; filename="facture_{mat}_{ts}.pdf"'
+    return resp
+
+
+@login_required(login_url="web:login")
+def sale_new(request):
+    """Obsolète : la vente de produits se fait désormais au niveau du retrait.
+
+    On redirige vers la page de retrait (qui gère les produits + facture).
+    """
+    return redirect("web:withdrawal_new")
 
 
 @login_required(login_url="web:login")
