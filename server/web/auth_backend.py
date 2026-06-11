@@ -49,6 +49,9 @@ class RemoteUserBackend(BaseBackend):
         user.is_active = True
         # is_staff donne accès au /admin/ Django : on ne l'accorde qu'aux rôles admin.
         user.is_staff = remote.role in ("super_admin", "admin")
+        # Un super_admin a tous les droits dans l'admin Django (gestion des
+        # Devices/jetons de synchronisation, consultation des données…).
+        user.is_superuser = remote.role == "super_admin"
         user.set_unusable_password()
         user.save()
 
