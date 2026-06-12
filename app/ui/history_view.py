@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 from app.config import EXPORT_DIR, PAGE_SIZE
 from app.models.user import User
 from app.services import transaction_service, user_service
-from app.utils.exporters import export_to_excel, export_to_pdf
+# openpyxl/reportlab sont lourds : importés au moment de l'export (voir _export).
 from app.utils.helpers import format_money
 from app.ui.widgets.dialogs import access_denied, confirm, error, info
 
@@ -300,6 +300,7 @@ class HistoryView(QWidget):
         if not path:
             return
         try:
+            from app.utils.exporters import export_to_excel, export_to_pdf
             if fmt == "xlsx":
                 export_to_excel(Path(path), "Historique des transactions", EXPORT_HEADERS, rows)
             else:

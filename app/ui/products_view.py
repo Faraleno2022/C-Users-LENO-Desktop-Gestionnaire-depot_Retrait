@@ -30,7 +30,8 @@ from PySide6.QtWidgets import (
 
 from app.models.user import User
 from app.services import product_service
-from app.utils import stock_documents
+# reportlab (via app.utils.stock_documents) est lourd : importé au moment
+# de la génération d'un document seulement (méthodes _generate_bon & co).
 from app.utils.helpers import format_money, open_file
 from app.ui.widgets.dialogs import access_denied, confirm, error, info
 
@@ -425,6 +426,7 @@ class ProductsView(QWidget):
         if product is None:
             product = product_service.get_product(movement.product_id)
         try:
+            from app.utils import stock_documents
             path = stock_documents.bon_mouvement_pdf(movement, product)
         except Exception as e:  # génération PDF non critique : on informe sans planter
             error(self, "Erreur", f"Impossible de générer le bon : {e}")
@@ -457,6 +459,7 @@ class ProductsView(QWidget):
             return
         movements = product_service.list_movements(product_id=pid, limit=500)
         try:
+            from app.utils import stock_documents
             path = stock_documents.fiche_article_pdf(product, movements)
         except Exception as e:
             error(self, "Erreur", f"Impossible de générer la fiche : {e}")
@@ -470,6 +473,7 @@ class ProductsView(QWidget):
             info(self, "Inventaire", "Aucun produit actif à inventorier.")
             return
         try:
+            from app.utils import stock_documents
             path = stock_documents.inventaire_pdf(products)
         except Exception as e:
             error(self, "Erreur", f"Impossible de générer l'inventaire : {e}")

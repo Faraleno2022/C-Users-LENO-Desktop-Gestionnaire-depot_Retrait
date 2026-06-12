@@ -33,7 +33,9 @@ Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; Mode onedir : on installe le dossier complet (démarrage rapide, pas
+; d'auto-extraction à chaque lancement comme en onefile).
+Source: "dist\EMAB-Gestionnaire\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 ; Raccourci bureau

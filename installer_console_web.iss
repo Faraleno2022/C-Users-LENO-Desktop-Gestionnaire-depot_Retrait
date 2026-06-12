@@ -31,7 +31,9 @@ Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "server\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; Mode onedir : on installe le dossier complet (démarrage rapide, pas
+; d'auto-extraction à chaque lancement comme en onefile).
+Source: "server\dist\EMAB-Console-Web\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon

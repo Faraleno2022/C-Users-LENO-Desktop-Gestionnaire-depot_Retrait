@@ -7,8 +7,11 @@ from typing import List, Optional, Sequence, Tuple
 
 from app.config import DATE_FMT, EXPORT_DIR
 from app.db.database import get_connection
-from app.utils.exporters import export_to_excel, export_to_pdf
 from app.utils.helpers import format_money
+
+# NB : openpyxl/reportlab (via app.utils.exporters) coûtent ~2,5 s à importer.
+# Ils sont chargés paresseusement dans generate_report() pour ne pas ralentir
+# le démarrage de l'application (ce module est importé par le tableau de bord).
 
 
 def _period_label(date_from: str, date_to: str) -> str:
@@ -157,6 +160,7 @@ def generate_report(
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_kind = f"{dataset}_{kind}".replace(" ", "_")
+    from app.utils.exporters import export_to_excel, export_to_pdf
     if fmt == "xlsx":
         path = EXPORT_DIR / f"rapport_{safe_kind}_{timestamp}.xlsx"
         return export_to_excel(path, f"{title} - {subtitle}", headers, rows)
