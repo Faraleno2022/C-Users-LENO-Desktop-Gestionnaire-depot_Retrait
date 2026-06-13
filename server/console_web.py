@@ -138,9 +138,33 @@ def main() -> int:
     print("Préparation de la base locale…")
     call_command("migrate", interactive=False, verbosity=0)
 
-    # --- Compte super_admin par défaut (premier démarrage uniquement) ---
     from sync.models import Device, RemoteUser
 
+    render_cfg = _read_render_config(data_dir)
+    render_ready = bool(
+        render_cfg.get("enabled")
+        and (render_cfg.get("url") or "").strip()
+        and (render_cfg.get("token") or "").strip()
+        and "COLLEZ-ICI" not in (render_cfg.get("token") or "")
+    )
+
+    # --- Synchronisation initiale (machine rejoignant un système existant) ---
+    # Si la sync en ligne est déjà configurée et qu'aucun compte n'existe encore,
+    # on rapatrie d'abord les données du serveur : on évite ainsi de créer un
+    # compte « admin » par défaut en double avec celui du serveur.
+    if render_ready and not RemoteUser.objects.exists():
+        try:
+            from sync.replicator import Replicator
+            print("Synchronisation initiale avec le serveur en ligne…")
+            Replicator(
+                render_cfg["url"], render_cfg["token"],
+                data_dir / "render_sync_state.json",
+            ).run_once()
+            print("Synchronisation initiale terminée.")
+        except Exception as e:  # réseau indisponible : on continue, sync reprendra
+            print(f"Sync initiale impossible ({type(e).__name__}), démarrage hors-ligne.")
+
+    # --- Compte super_admin par défaut (uniquement si la base est vierge) ---
     if not RemoteUser.objects.filter(role="super_admin", actif=True).exists():
         call_command("createwebadmin", "admin", "admin123")
         print(">> Compte par défaut créé : admin / admin123 (changez-le !)")

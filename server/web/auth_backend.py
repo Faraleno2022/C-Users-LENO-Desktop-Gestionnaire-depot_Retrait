@@ -26,17 +26,24 @@ class RemoteUserBackend(BaseBackend):
     def authenticate(self, request, username: Optional[str] = None, password: Optional[str] = None, **kwargs):
         if not username or not password:
             return None
-        try:
-            remote = RemoteUser.objects.filter(identifiant=username, actif=True).order_by("-id").first()
-        except RemoteUser.DoesNotExist:
-            return None
-        if remote is None or not remote.password_hash:
-            return None
-        try:
-            ok = bcrypt.checkpw(password.encode("utf-8"), remote.password_hash.encode("utf-8"))
-        except (ValueError, TypeError):
-            return None
-        if not ok:
+        # Plusieurs comptes peuvent partager le même identifiant après une
+        # synchronisation multi-machines (ex. un « admin » local + un « admin »
+        # venu du serveur). On essaie chacun et on accepte celui dont le mot de
+        # passe correspond — le plus récent d'abord.
+        candidates = RemoteUser.objects.filter(
+            identifiant=username, actif=True
+        ).order_by("-id")
+        remote = None
+        for candidate in candidates:
+            if not candidate.password_hash:
+                continue
+            try:
+                if bcrypt.checkpw(password.encode("utf-8"), candidate.password_hash.encode("utf-8")):
+                    remote = candidate
+                    break
+            except (ValueError, TypeError):
+                continue
+        if remote is None:
             return None
 
         # User miroir Django (sans mot de passe utilisable côté Django).
