@@ -35,7 +35,9 @@ RENDER_SYNC_TEMPLATE = {
     "enabled": False,
     "url": "https://gestionnaire-depot-retrait.onrender.com",
     "token": "COLLEZ-ICI-LE-JETON-DEVICE-DU-SERVEUR",
-    "interval_seconds": 60,
+    # 15 s : quasi temps réel. Ces requêtes régulières gardent aussi le
+    # serveur Render « éveillé » (le plan gratuit s'endort sans trafic).
+    "interval_seconds": 15,
 }
 
 
@@ -65,7 +67,7 @@ def _replication_loop(data_dir: Path) -> None:
     state_path = data_dir / "render_sync_state.json"
     while True:
         cfg = _read_render_config(data_dir)
-        interval = max(15, int(cfg.get("interval_seconds") or 60))
+        interval = max(10, int(cfg.get("interval_seconds") or 15))
         token = (cfg.get("token") or "").strip()
         url = (cfg.get("url") or "").strip()
         if cfg.get("enabled") and url and token and "COLLEZ-ICI" not in token:
