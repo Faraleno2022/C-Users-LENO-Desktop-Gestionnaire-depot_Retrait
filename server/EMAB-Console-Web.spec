@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_submodules
 
 datas = [('staticfiles', 'staticfiles')]
-hiddenimports = ['waitress', 'dj_database_url', 'dotenv']
+hiddenimports = ['waitress', 'dj_database_url', 'dotenv', 'updater']
 datas += collect_data_files('web')
 datas += collect_data_files('django')
 datas += collect_data_files('rest_framework')

@@ -28,6 +28,11 @@ import time
 import webbrowser
 from pathlib import Path
 
+# Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
+# GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
+# C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
+APP_VERSION = "1.0.0"
+
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
 
@@ -187,6 +192,18 @@ def main() -> int:
         print("  (enabled: true + jeton Device créé sur le serveur, puis ce")
         print("   fichier est relu automatiquement, sans redémarrage).")
     threading.Thread(target=_replication_loop, args=(data_dir,), daemon=True).start()
+
+    # --- Vérification de mise à jour (arrière-plan, n'interrompt rien) ----
+    def _check_update():
+        try:
+            from updater import check_and_prepare_update
+            ready = check_and_prepare_update(APP_VERSION, data_dir)
+            if ready:
+                print(f"[MAJ] Version {ready} téléchargée — elle s'installera "
+                      f"au prochain démarrage (vos données sont conservées).")
+        except Exception:
+            pass
+    threading.Thread(target=_check_update, daemon=True).start()
 
     # --- Démarrage du serveur -------------------------------------------
     from core.wsgi import application
