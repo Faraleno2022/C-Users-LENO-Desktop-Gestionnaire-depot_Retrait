@@ -158,13 +158,14 @@ def _month_range():
     return start, end
 
 
-@login_required(login_url="web:login")
-def dashboard(request):
-    # Solde global = sum(depots) - sum(retraits) sur les transactions non supprimées.
+def _dashboard_stats() -> dict:
+    """Chiffres du tableau de bord (valeurs brutes). Partagé par la page et l'API."""
     tx = Transaction.objects.filter(deleted=False)
     depots = tx.filter(type="depot").aggregate(s=Sum("montant"))["s"] or 0
     retraits = tx.filter(type="retrait").aggregate(s=Sum("montant"))["s"] or 0
-    solde = float(depots) - float(retraits)
+    ventes_all = Sale.objects.filter(deleted=False).aggregate(s=Sum("montant_total"))["s"] or 0
+    # Solde global = dépôts − retraits − ventes (cohérent avec le solde par client).
+    solde = float(depots) - float(retraits) - float(ventes_all)
 
     today_from, today_to = _today_range()
     tx_today = tx.filter(created_at__gte=today_from, created_at__lte=today_to)
@@ -184,19 +185,12 @@ def dashboard(request):
     n_sales_today = sales_today.count()
     s_month = sales_month.aggregate(s=Sum("montant_total"))["s"] or 0
 
-    # Stock
     products = Product.objects.filter(actif=True)
     n_products = products.count()
     stock_value = sum((p.quantite_stock or 0) * (p.prix_unitaire or 0) for p in products)
-    low_stock = [p for p in products if (p.quantite_stock or 0) <= (p.seuil_alerte or 0)]
+    n_low_stock = sum(1 for p in products if (p.quantite_stock or 0) <= (p.seuil_alerte or 0))
 
-    # Clients
-    n_clients = Client.objects.filter(actif=True).count()
-
-    # Dernières opérations
-    recent_tx = tx.order_by("-created_at")[:10]
-
-    ctx = {
+    return {
         "solde": solde,
         "depots_today": depots_today,
         "retraits_today": retraits_today,
@@ -208,12 +202,31 @@ def dashboard(request):
         "sales_month_total": s_month,
         "n_products": n_products,
         "stock_value": stock_value,
-        "n_low_stock": len(low_stock),
-        "n_clients": n_clients,
-        "recent_tx": recent_tx,
-        "remote": _remote(request),
+        "n_low_stock": n_low_stock,
+        "n_clients": Client.objects.filter(actif=True).count(),
     }
+
+
+@login_required(login_url="web:login")
+def dashboard(request):
+    ctx = _dashboard_stats()
+    ctx["recent_tx"] = Transaction.objects.filter(deleted=False).order_by("-created_at")[:10]
+    ctx["remote"] = _remote(request)
     return render(request, "web/dashboard.html", ctx)
+
+
+@login_required(login_url="web:login")
+def dashboard_stats_api(request):
+    """Renvoie les chiffres du tableau de bord en JSON (rafraîchissement auto)."""
+    s = _dashboard_stats()
+    money_keys = {
+        "solde", "depots_today", "retraits_today", "depots_month",
+        "retraits_month", "sales_today_total", "sales_month_total", "stock_value",
+    }
+    out = {}
+    for k, v in s.items():
+        out[k] = _fmt_money(v) if k in money_keys else v
+    return JsonResponse(out)
 
 
 def _paginate(request, qs, per_page=PAGE_SIZE):
@@ -229,6 +242,23 @@ def _matricule_balance(matricule: str) -> float:
     retraits = tx.filter(type="retrait").aggregate(s=Sum("montant"))["s"] or 0
     ventes = Sale.objects.filter(matricule=matricule, deleted=False).aggregate(s=Sum("montant_total"))["s"] or 0
     return float(depots) - float(retraits) - float(ventes)
+
+
+def _normalize_name(s: str) -> str:
+    """Nom comparable : minuscules, espaces multiples réduits."""
+    return " ".join((s or "").lower().split())
+
+
+def _find_duplicate_product(nom: str, reference: str = ""):
+    """Produit actif au nom (ou référence) équivalent, sinon None."""
+    norm = _normalize_name(nom)
+    ref = (reference or "").strip().lower()
+    for p in Product.objects.filter(actif=True):
+        if _normalize_name(p.nom) == norm:
+            return p
+        if ref and (p.reference or "").strip().lower() == ref:
+            return p
+    return None
 
 
 @login_required(login_url="web:login")
@@ -407,56 +437,83 @@ def withdrawal_new(request):
             if detail:
                 note_full = (f"{note} | " if note else "") + f"Produits: {detail}"
 
-            tx = Transaction.objects.create(
-                uuid=str(uuid_mod.uuid4()),
-                matricule=matricule,
-                telephone=telephone,
-                type="retrait",
-                montant=montant,
-                solde_apres=new_balance,
-                agent_id=agent_id,
-                agent_uuid=agent_uuid,
-                agent_nom=agent_nom,
-                note=note_full,
-                created_at=_iso_now(),
-                deleted=False,
-            )
-
-            # Décrémente le stock et trace un mouvement de sortie par produit.
-            for l in lines:
-                product = l["product"]
-                new_stock = float(product.quantite_stock or 0) - l["quantite"]
-                product.quantite_stock = new_stock
-                product.updated_at = _iso_now()
-                product.save()
-                StockMovement.objects.create(
-                    uuid=str(uuid_mod.uuid4()),
-                    product_id=product.id, product_uuid=product.uuid, product_nom=product.nom,
-                    type="sortie", quantite=l["quantite"], stock_apres=new_stock,
-                    motif=f"Retrait {matricule}", sale_id=None,
-                    agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
-                    created_at=_iso_now(),
+            # Avec produits : on enregistre une VENTE par produit (débit du
+            # solde + décrément du stock). Ces ventes apparaissent dans /ventes/
+            # et sont annulables — l'annulation rétablit le stock et le solde.
+            # Sans produit : c'est un retrait d'espèces (transaction retrait).
+            if lines:
+                running = current
+                first_id = None
+                for l in lines:
+                    product = l["product"]
+                    running -= l["total"]
+                    new_stock = float(product.quantite_stock or 0) - l["quantite"]
+                    sale = Sale.objects.create(
+                        uuid=str(uuid_mod.uuid4()),
+                        matricule=matricule, telephone=telephone,
+                        product_id=product.id, product_uuid=product.uuid,
+                        product_nom=product.nom,
+                        quantite=l["quantite"], prix_unitaire=l["prix"],
+                        montant_total=l["total"], solde_apres=running,
+                        agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
+                        note=note, created_at=_iso_now(), deleted=False,
+                    )
+                    product.quantite_stock = new_stock
+                    product.updated_at = _iso_now()
+                    product.save()
+                    StockMovement.objects.create(
+                        uuid=str(uuid_mod.uuid4()),
+                        product_id=product.id, product_uuid=product.uuid,
+                        product_nom=product.nom,
+                        type="sortie", quantite=l["quantite"], stock_apres=new_stock,
+                        motif=f"Vente {matricule}", sale_id=sale.id,
+                        agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
+                        created_at=_iso_now(),
+                    )
+                    if first_id is None:
+                        first_id = sale.id
+                _log_audit(
+                    request, "sale_create", target_type="sale",
+                    target_id=str(first_id or ""),
+                    details=f"matricule={matricule} montant={montant:.0f} "
+                            f"solde_apres={new_balance:.0f} produits=[{detail}]",
                 )
+                messages.success(
+                    request,
+                    f"Vente de {montant:,.0f} GNF enregistrée pour {matricule}. "
+                    f"Nouveau solde : {new_balance:,.0f} GNF.",
+                )
+                receipt_id, receipt_at = first_id, _iso_now()
+            else:
+                tx = Transaction.objects.create(
+                    uuid=str(uuid_mod.uuid4()),
+                    matricule=matricule, telephone=telephone, type="retrait",
+                    montant=montant, solde_apres=new_balance,
+                    agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
+                    note=note_full, created_at=_iso_now(), deleted=False,
+                )
+                _log_audit(
+                    request, "retrait_create", target_type="transaction", target_id=tx.uuid,
+                    details=f"matricule={matricule} montant={montant:.0f} "
+                            f"solde_apres={new_balance:.0f}",
+                )
+                messages.success(
+                    request,
+                    f"Retrait de {montant:,.0f} GNF enregistré pour {matricule}. "
+                    f"Nouveau solde : {new_balance:,.0f} GNF.",
+                )
+                receipt_id, receipt_at = tx.id, tx.created_at
 
-            _log_audit(
-                request, "retrait_create", target_type="transaction", target_id=tx.uuid,
-                details=f"matricule={matricule} montant={montant:.0f} solde_apres={new_balance:.0f}"
-                + (f" produits=[{detail}]" if detail else ""),
-            )
-            messages.success(
-                request,
-                f"Retrait de {montant:,.0f} GNF enregistré pour {matricule}. "
-                f"Nouveau solde : {new_balance:,.0f} GNF.",
-            )
             request.session["last_withdrawal"] = {
-                "id": tx.id,
+                "id": receipt_id,
                 "matricule": matricule,
                 "telephone": telephone,
                 "montant": montant,
                 "solde_avant": current,
                 "solde_apres": new_balance,
-                "created_at": tx.created_at,
-                "agent_nom": tx.agent_nom,
+                "created_at": receipt_at,
+                "agent_nom": agent_nom,
+                "is_sale": bool(lines),
                 "lines": [
                     {"product_nom": l["product_nom"], "quantite": l["quantite"],
                      "prix": l["prix"], "total": l["total"]}
@@ -712,6 +769,18 @@ def product_new(request):
             if not nom:
                 raise ValueError("Le nom est obligatoire.")
             reference = (request.POST.get("reference") or "").strip()
+            # Anti-doublon : refuse un nom déjà utilisé (insensible à la casse et
+            # aux espaces) ou une référence déjà prise, sauf si on force.
+            force = request.POST.get("force_create") == "1"
+            if not force:
+                dup = _find_duplicate_product(nom, reference)
+                if dup is not None:
+                    raise ValueError(
+                        f"Un produit identique semble déjà exister : « {dup.nom} »"
+                        + (f" (réf. {dup.reference})" if dup.reference else "")
+                        + ". Modifiez-le, ou cochez « créer quand même » si c'est"
+                        " bien un produit différent."
+                    )
             description = (request.POST.get("description") or "").strip()
             prix = float(request.POST.get("prix_unitaire") or 0)
             if prix < 0:
@@ -741,6 +810,28 @@ def product_new(request):
         "error": error,
         "remote": _remote(request),
     })
+
+
+@login_required(login_url="web:login")
+def product_search_api(request):
+    """Suggestions de produits existants pour éviter les doublons à la saisie."""
+    q = _normalize_name(request.GET.get("q") or "")
+    results = []
+    if len(q) >= 2:
+        words = [w for w in q.split() if len(w) >= 3]
+        for p in Product.objects.filter(actif=True).order_by("nom"):
+            name = _normalize_name(p.nom)
+            if q in name or name in q or any(w in name for w in words):
+                results.append({
+                    "id": p.id,
+                    "nom": p.nom,
+                    "reference": p.reference or "",
+                    "prix": _fmt_money(p.prix_unitaire),
+                    "stock": _fmt_num(p.quantite_stock),
+                })
+            if len(results) >= 6:
+                break
+    return JsonResponse({"results": results})
 
 
 @login_required(login_url="web:login")

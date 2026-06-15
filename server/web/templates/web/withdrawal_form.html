@@ -196,9 +196,16 @@
 
         // --- Chargement temps réel du solde quand le matricule change ---
         var fetchTimer = null;
+        var autoPhone = '';  // dernier téléphone rempli automatiquement
         function loadBalance() {
           var mat = matInput.value.trim();
-          if (!mat) { clientBalance = null; recompute(); return; }
+          if (!mat) {
+            clientBalance = null;
+            if (telInput.value === autoPhone) telInput.value = '';  // efface le tél. auto
+            autoPhone = '';
+            recompute();
+            return;
+          }
           fetch(balanceUrl + '?matricule=' + encodeURIComponent(mat), {
             headers: { 'X-Requested-With': 'XMLHttpRequest' }
           })
@@ -207,7 +214,12 @@
               clientBalance = d.balance;
               var nom = document.getElementById('balanceClientNom');
               nom.textContent = d.found ? (d.nom ? '· ' + d.nom : '') : '· (matricule inconnu)';
-              if (d.found && d.telephone && !telInput.value) telInput.value = d.telephone;
+              // Remplit/efface le téléphone seulement s'il est vide ou auto-rempli
+              // (on ne touche jamais à un numéro saisi à la main).
+              if (telInput.value === '' || telInput.value === autoPhone) {
+                telInput.value = (d.found && d.telephone) ? d.telephone : '';
+                autoPhone = telInput.value;
+              }
               recompute();
             })
             .catch(function () { clientBalance = null; recompute(); });
@@ -245,7 +257,7 @@
     {% if last_receipt %}
       <div class="card p-4 shadow-sm border-danger" id="receipt">
         <div class="text-center border-bottom pb-2 mb-3" style="border-style:dashed!important;">
-          <div class="fw-bold">FACTURE / FICHE DE RETRAIT</div>
+          <div class="fw-bold">{% if last_receipt.is_sale %}FACTURE DE VENTE{% else %}FICHE DE RETRAIT{% endif %}</div>
           <small class="text-muted">N° {{ last_receipt.id }} — {{ last_receipt.created_at }}</small>
         </div>
 
@@ -276,7 +288,7 @@
         <table class="table table-sm mb-3">
           <tr><th>Solde avant</th><td class="text-end">{{ last_receipt.solde_avant|money }}</td></tr>
           <tr class="text-danger">
-            <th>Montant du retrait</th>
+            <th>{% if last_receipt.is_sale %}Montant de la vente{% else %}Montant du retrait{% endif %}</th>
             <td class="text-end fw-bold">−{{ last_receipt.montant|money }}</td>
           </tr>
           <tr class="table-active">

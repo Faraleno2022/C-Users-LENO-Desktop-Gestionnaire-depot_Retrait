@@ -13,8 +13,23 @@
       {% csrf_token %}
       <div class="mb-3">
         <label class="form-label">Nom <span class="text-danger">*</span></label>
-        <input type="text" name="nom" class="form-control" required
-               value="{{ product.nom|default:'' }}">
+        <input type="text" name="nom" id="nom" class="form-control" required
+               autocomplete="off" value="{{ product.nom|default:'' }}">
+        {% if not product %}
+          <div id="dupZone" class="mt-2" style="display:none;">
+            <div class="alert alert-warning py-2 px-3 mb-2 small">
+              <i class="bi bi-exclamation-triangle"></i>
+              <strong>Produit(s) similaire(s) déjà existant(s)</strong> — évitez les doublons :
+              <div id="dupList" class="mt-1"></div>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="force_create" value="1" id="force_create">
+              <label class="form-check-label small" for="force_create">
+                C'est bien un <strong>produit différent</strong> — créer quand même
+              </label>
+            </div>
+          </div>
+        {% endif %}
       </div>
       <div class="mb-3">
         <label class="form-label">Référence</label>
@@ -65,4 +80,37 @@
     </form>
   </div>
 </div>
+
+{% if not product %}
+<script>
+  (function () {
+    var nom = document.getElementById('nom');
+    var zone = document.getElementById('dupZone');
+    var list = document.getElementById('dupList');
+    if (!nom || !zone) return;
+    var url = "{% url 'web:product_search_api' %}";
+    var timer = null;
+
+    function lookup() {
+      var q = nom.value.trim();
+      if (q.length < 2) { zone.style.display = 'none'; return; }
+      fetch(url + '?q=' + encodeURIComponent(q), { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var items = d.results || [];
+          if (!items.length) { zone.style.display = 'none'; list.innerHTML = ''; return; }
+          list.innerHTML = items.map(function (p) {
+            return '<div>• <strong>' + p.nom + '</strong>'
+              + (p.reference ? ' <span class="text-muted">(' + p.reference + ')</span>' : '')
+              + ' — ' + p.prix + ', stock ' + p.stock
+              + ' <a href="/produits/' + p.id + '/modifier/" class="ms-1">Modifier</a></div>';
+          }).join('');
+          zone.style.display = 'block';
+        })
+        .catch(function () {});
+    }
+    nom.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(lookup, 300); });
+  })();
+</script>
+{% endif %}
 {% endblock %}

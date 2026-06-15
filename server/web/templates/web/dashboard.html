@@ -3,63 +3,74 @@
 {% block title %}Tableau de bord{% endblock %}
 
 {% block content %}
-<h1 class="h3 mb-4">Tableau de bord</h1>
+<div class="d-flex align-items-center mb-4">
+  <h1 class="h3 mb-0 me-2">Tableau de bord</h1>
+  <span class="badge bg-success-subtle text-success" id="liveBadge" style="font-size:.7rem;">
+    <i class="bi bi-arrow-repeat"></i> à jour
+  </span>
+</div>
 
 <div class="row g-3 mb-4">
   <div class="col-12 col-sm-6 col-lg-4">
     <div class="card stat-card p-3 h-100">
       <div class="label">Solde global</div>
-      <div class="value">{{ solde|money }}</div>
+      <div class="value" id="v-solde">{{ solde|money }}</div>
     </div>
   </div>
   <div class="col-12 col-sm-6 col-lg-4">
     <div class="card stat-card stat-success p-3 h-100">
       <div class="label">Dépôts du jour</div>
-      <div class="value">{{ depots_today|money }}</div>
+      <div class="value" id="v-depots_today">{{ depots_today|money }}</div>
     </div>
   </div>
   <div class="col-12 col-sm-6 col-lg-4">
     <div class="card stat-card stat-danger p-3 h-100">
       <div class="label">Retraits du jour</div>
-      <div class="value">{{ retraits_today|money }}</div>
+      <div class="value" id="v-retraits_today">{{ retraits_today|money }}</div>
     </div>
   </div>
 
   <div class="col-12 col-sm-6 col-lg-4">
     <div class="card stat-card stat-purple p-3 h-100">
       <div class="label">Opérations du jour</div>
-      <div class="value">{{ n_today }}</div>
+      <div class="value" id="v-n_today">{{ n_today }}</div>
     </div>
   </div>
   <div class="col-12 col-sm-6 col-lg-4">
     <div class="card stat-card stat-info p-3 h-100">
       <div class="label">Ventes du jour</div>
-      <div class="value">{{ sales_today_total|money }} <small class="text-muted">({{ sales_today_count }})</small></div>
+      <div class="value">
+        <span id="v-sales_today_total">{{ sales_today_total|money }}</span>
+        <small class="text-muted" id="v-sales_today_count">({{ sales_today_count }})</small>
+      </div>
     </div>
   </div>
   <div class="col-12 col-sm-6 col-lg-4">
     <div class="card stat-card stat-warn p-3 h-100">
       <div class="label">Produits en alerte</div>
-      <div class="value">{{ n_low_stock }} <small class="text-muted">/ {{ n_products }}</small></div>
+      <div class="value">
+        <span id="v-n_low_stock">{{ n_low_stock }}</span>
+        <small class="text-muted"><span id="v-n_products">/ {{ n_products }}</span></small>
+      </div>
     </div>
   </div>
 
   <div class="col-12 col-sm-6 col-lg-4">
     <div class="card stat-card stat-success p-3 h-100">
       <div class="label">Dépôts du mois</div>
-      <div class="value">{{ depots_month|money }}</div>
+      <div class="value" id="v-depots_month">{{ depots_month|money }}</div>
     </div>
   </div>
   <div class="col-12 col-sm-6 col-lg-4">
     <div class="card stat-card stat-danger p-3 h-100">
       <div class="label">Retraits du mois</div>
-      <div class="value">{{ retraits_month|money }}</div>
+      <div class="value" id="v-retraits_month">{{ retraits_month|money }}</div>
     </div>
   </div>
   <div class="col-12 col-sm-6 col-lg-4">
     <div class="card stat-card stat-teal p-3 h-100">
       <div class="label">Valeur du stock</div>
-      <div class="value">{{ stock_value|money }}</div>
+      <div class="value" id="v-stock_value">{{ stock_value|money }}</div>
     </div>
   </div>
 </div>
@@ -101,4 +112,32 @@
     </table>
   </div>
 </div>
+
+<script>
+  (function () {
+    var url = "{% url 'web:dashboard_stats_api' %}";
+    function set(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; }
+    function refresh() {
+      fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          set('v-solde', d.solde);
+          set('v-depots_today', d.depots_today);
+          set('v-retraits_today', d.retraits_today);
+          set('v-n_today', d.n_today);
+          set('v-sales_today_total', d.sales_today_total);
+          set('v-sales_today_count', '(' + d.sales_today_count + ')');
+          set('v-n_low_stock', d.n_low_stock);
+          set('v-n_products', '/ ' + d.n_products);
+          set('v-depots_month', d.depots_month);
+          set('v-retraits_month', d.retraits_month);
+          set('v-stock_value', d.stock_value);
+          var b = document.getElementById('liveBadge');
+          if (b) { b.style.opacity = '1'; setTimeout(function () { b.style.opacity = '.45'; }, 600); }
+        })
+        .catch(function () {});
+    }
+    setInterval(refresh, 10000);
+  })();
+</script>
 {% endblock %}
