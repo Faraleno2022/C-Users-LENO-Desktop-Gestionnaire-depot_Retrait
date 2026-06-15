@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -47,7 +47,11 @@ RENDER_SYNC_TEMPLATE = {
 
 
 def _read_render_config(data_dir: Path) -> dict:
-    """Lit (et crée au besoin) la config de réplication vers le serveur en ligne."""
+    """Lit (et crée au besoin) la config de réplication vers le serveur en ligne.
+
+    Tolère un éventuel BOM ajouté par le Bloc-notes (utf-8-sig) pour que le
+    fichier reste lisible même édité maladroitement.
+    """
     cfg_path = data_dir / "render_sync.json"
     if not cfg_path.exists():
         cfg_path.write_text(
@@ -56,9 +60,38 @@ def _read_render_config(data_dir: Path) -> dict:
         )
         return dict(RENDER_SYNC_TEMPLATE)
     try:
-        return {**RENDER_SYNC_TEMPLATE, **json.loads(cfg_path.read_text(encoding="utf-8"))}
+        raw = cfg_path.read_text(encoding="utf-8-sig")
+        return {**RENDER_SYNC_TEMPLATE, **json.loads(raw)}
     except (OSError, ValueError):
         return dict(RENDER_SYNC_TEMPLATE)
+
+
+def _diagnose_render_config(data_dir: Path) -> None:
+    """Affiche un diagnostic clair de l'état de la sync au démarrage."""
+    cfg_path = data_dir / "render_sync.json"
+    cfg = _read_render_config(data_dir)
+    token = (cfg.get("token") or "").strip()
+    url = (cfg.get("url") or "").strip()
+    print("-" * 62)
+    if cfg.get("enabled") and url and token and "COLLEZ-ICI" not in token:
+        print(f"Sync serveur en ligne : ACTIVEE  ->  {url}")
+        print(f"  Intervalle : {max(3, int(cfg.get('interval_seconds') or 5))} s")
+        print("  Surveillez les lignes [Sync Render] ci-dessous.")
+    else:
+        print("Sync serveur en ligne : DESACTIVEE.")
+        # Aide au diagnostic : pourquoi ?
+        if cfg_path.exists():
+            try:
+                json.loads(cfg_path.read_text(encoding="utf-8-sig"))
+                if not cfg.get("enabled"):
+                    print("  Cause : \"enabled\" n'est pas true dans render_sync.json.")
+                elif not token or "COLLEZ-ICI" in token:
+                    print("  Cause : le jeton (token) n'est pas renseigne.")
+            except (OSError, ValueError) as e:
+                print(f"  Cause : render_sync.json est mal forme ({e}).")
+                print("  Re-collez exactement les 6 lignes du modele, puis enregistrez.")
+        print(f"  Fichier : {cfg_path}")
+    print("-" * 62)
 
 
 def _replication_loop(data_dir: Path) -> None:
@@ -182,15 +215,7 @@ def main() -> int:
     print(f"(copié dans : {token_file})")
 
     # --- Réplication vers le serveur en ligne (Render) -------------------
-    render_cfg = _read_render_config(data_dir)
-    if render_cfg.get("enabled") and "COLLEZ-ICI" not in (render_cfg.get("token") or ""):
-        print(f"Sync serveur en ligne : ACTIVÉE → {render_cfg.get('url')}")
-        print(f"  (toutes les {max(15, int(render_cfg.get('interval_seconds') or 60))} s, dès qu'internet est disponible)")
-    else:
-        print("Sync serveur en ligne : désactivée.")
-        print(f"  Pour l'activer : éditez {data_dir / 'render_sync.json'}")
-        print("  (enabled: true + jeton Device créé sur le serveur, puis ce")
-        print("   fichier est relu automatiquement, sans redémarrage).")
+    _diagnose_render_config(data_dir)
     threading.Thread(target=_replication_loop, args=(data_dir,), daemon=True).start()
 
     # --- Vérification de mise à jour (arrière-plan, n'interrompt rien) ----
