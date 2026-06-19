@@ -333,7 +333,9 @@ def deposit_new(request):
         except (ValueError, TypeError) as e:
             error = str(e)
 
-    last_receipt = request.session.pop("last_deposit", None)
+    # On conserve le reçu en session (sans le retirer) pour permettre
+    # l'impression du ticket de caisse.
+    last_receipt = request.session.get("last_deposit")
     return render(request, "web/deposit_form.html", {
         "error": error,
         "remote": r,
@@ -588,6 +590,50 @@ def withdrawal_invoice(request):
     resp = HttpResponse(content, content_type="application/pdf")
     resp["Content-Disposition"] = f'attachment; filename="facture_{mat}_{ts}.pdf"'
     return resp
+
+
+@login_required(login_url="web:login")
+def print_ticket(request):
+    """Reçu au format ticket pour imprimante thermique de caisse (rouleau 58/80 mm).
+
+    Lit la dernière opération en session (dépôt ou retrait/vente) et l'affiche
+    en HTML optimisé pour l'impression sur rouleau. Le navigateur envoie le rendu
+    à l'imprimante thermique installée comme imprimante Windows.
+    """
+    kind = (request.GET.get("kind") or "retrait").strip()
+    width = "58" if (request.GET.get("w") or "80").strip() == "58" else "80"
+    auto = request.GET.get("auto") == "1"
+
+    if kind == "depot":
+        data = request.session.get("last_deposit")
+    else:
+        data = request.session.get("last_withdrawal")
+    if not data:
+        messages.warning(request, "Aucun reçu récent à imprimer.")
+        return redirect("web:deposit_new" if kind == "depot" else "web:withdrawal_new")
+
+    montant = float(data.get("montant") or 0)
+    solde_apres = float(data.get("solde_apres") or 0)
+    if kind == "depot":
+        solde_avant = solde_apres - montant
+        titre, signe = "REÇU DE DÉPÔT", "+"
+    else:
+        solde_avant = float(data.get("solde_avant", solde_apres + montant))
+        titre = "FACTURE DE VENTE" if data.get("is_sale") else "REÇU DE RETRAIT"
+        signe = "−"
+
+    return render(request, "web/receipt_ticket.html", {
+        "r": data,
+        "kind": kind,
+        "width": width,
+        "auto": auto,
+        "titre": titre,
+        "signe": signe,
+        "montant": montant,
+        "solde_avant": solde_avant,
+        "solde_apres": solde_apres,
+        "company_name": "EMAB GROUP",
+    })
 
 
 @login_required(login_url="web:login")

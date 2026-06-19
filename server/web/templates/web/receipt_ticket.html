@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="fr">
+{% load money %}
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ticket {{ r.matricule }}</title>
+  <style>
+    /* Largeur du rouleau : 80 mm (zone imprimable ~72 mm) ou 58 mm (~48 mm). */
+    :root { --tw: {% if width == "58" %}48mm{% else %}72mm{% endif %}; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #e5e7eb; }
+    .ticket {
+      width: var(--tw);
+      margin: 12px auto;
+      background: #fff;
+      padding: 4mm 3mm;
+      font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
+      font-size: {% if width == "58" %}11px{% else %}12px{% endif %};
+      line-height: 1.35;
+      color: #000;
+    }
+    .center { text-align: center; }
+    .big { font-size: {% if width == "58" %}15px{% else %}17px{% endif %}; font-weight: 700; }
+    .muted { color: #333; }
+    .sep { border-top: 1px dashed #000; margin: 6px 0; }
+    .row { display: flex; justify-content: space-between; gap: 6px; }
+    .row .l { text-align: left; }
+    .row .r { text-align: right; white-space: nowrap; }
+    .item-name { word-break: break-word; }
+    .tot { font-weight: 700; }
+    .toolbar { text-align: center; margin: 10px; }
+    .toolbar button, .toolbar a {
+      font: inherit; padding: 8px 14px; margin: 0 4px; border-radius: 6px;
+      border: 1px solid #999; background: #fff; cursor: pointer; text-decoration: none; color: #000;
+    }
+    .toolbar .print { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+
+    @media print {
+      html, body { background: #fff; }
+      .toolbar { display: none; }
+      .ticket { margin: 0; padding: 2mm; width: auto; }
+      @page { size: {% if width == "58" %}58mm{% else %}80mm{% endif %} auto; margin: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button class="print" onclick="window.print()">🖨️ Imprimer</button>
+    <a href="?kind={{ kind }}&w={% if width == '58' %}80{% else %}58{% endif %}{% if auto %}&auto=1{% endif %}">
+      Passer en {% if width == "58" %}80 mm{% else %}58 mm{% endif %}
+    </a>
+    <a href="javascript:window.close()">Fermer</a>
+  </div>
+
+  <div class="ticket">
+    <div class="center big">{{ company_name }}</div>
+    <div class="center muted">{{ titre }}</div>
+    <div class="sep"></div>
+
+    <div class="row"><span class="l">N°</span><span class="r">{{ r.id }}</span></div>
+    <div class="row"><span class="l">Date</span><span class="r">{{ r.created_at }}</span></div>
+    <div class="row"><span class="l">Matricule</span><span class="r">{{ r.matricule }}</span></div>
+    {% if r.telephone %}<div class="row"><span class="l">Tél.</span><span class="r">{{ r.telephone }}</span></div>{% endif %}
+    <div class="row"><span class="l">Agent</span><span class="r">{{ r.agent_nom|default:"—" }}</span></div>
+
+    {% if r.lines %}
+      <div class="sep"></div>
+      {% for l in r.lines %}
+        <div class="item-name">{{ l.product_nom }}</div>
+        <div class="row">
+          <span class="l muted">{{ l.quantite }} × {{ l.prix|money }}</span>
+          <span class="r">{{ l.total|money }}</span>
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    <div class="sep"></div>
+    <div class="row"><span class="l">Solde avant</span><span class="r">{{ solde_avant|money }}</span></div>
+    <div class="row tot">
+      <span class="l">{{ titre|cut:"REÇU DE "|cut:"FACTURE DE " }}</span>
+      <span class="r">{{ signe }}{{ montant|money }}</span>
+    </div>
+    <div class="row tot"><span class="l">Solde restant</span><span class="r">{{ solde_apres|money }}</span></div>
+    <div class="sep"></div>
+
+    <div class="center muted">Merci de votre confiance</div>
+    <div class="center">{{ company_name }}</div>
+    <div class="center muted" style="margin-top:6px;">. . .</div>
+  </div>
+
+  {% if auto %}<script>window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 300); });</script>{% endif %}
+</body>
+</html>

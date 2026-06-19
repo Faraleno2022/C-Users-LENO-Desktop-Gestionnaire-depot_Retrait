@@ -18,6 +18,7 @@ urlpatterns = [
     path("corbeille/", views.trash, name="trash"),
     path("transactions/depot/", views.deposit_new, name="deposit_new"),
     path("transactions/retrait/", views.withdrawal_new, name="withdrawal_new"),
+    path("recu/ticket/", views.print_ticket, name="print_ticket"),
     path("transactions/retrait/facture/", views.withdrawal_invoice, name="withdrawal_invoice"),
     path("api/solde/", views.matricule_balance_api, name="matricule_balance_api"),
     path("ventes/nouvelle/", views.sale_new, name="sale_new"),
