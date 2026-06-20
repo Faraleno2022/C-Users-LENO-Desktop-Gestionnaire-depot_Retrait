@@ -622,6 +622,11 @@ def print_ticket(request):
         titre = "FACTURE DE VENTE" if data.get("is_sale") else "REÇU DE RETRAIT"
         signe = "−"
 
+    try:
+        from web.ticket_logo import TICKET_LOGO_DATA_URI as logo
+    except Exception:
+        logo = ""
+
     return render(request, "web/receipt_ticket.html", {
         "r": data,
         "kind": kind,
@@ -633,6 +638,7 @@ def print_ticket(request):
         "solde_avant": solde_avant,
         "solde_apres": solde_apres,
         "company_name": "EMAB GROUP",
+        "logo_uri": logo,
     })
 
 

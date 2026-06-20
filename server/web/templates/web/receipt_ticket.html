@@ -21,6 +21,7 @@
       color: #000;
     }
     .center { text-align: center; }
+    .logo { width: {% if width == "58" %}70%{% else %}62%{% endif %}; max-width: 240px; height: auto; margin: 2px auto 4px; display: block; }
     .big { font-size: {% if width == "58" %}15px{% else %}17px{% endif %}; font-weight: 700; }
     .muted { color: #333; }
     .sep { border-top: 1px dashed #000; margin: 6px 0; }
@@ -54,7 +55,11 @@
   </div>
 
   <div class="ticket">
-    <div class="center big">{{ company_name }}</div>
+    {% if logo_uri %}
+      <div class="center"><img src="{{ logo_uri }}" alt="{{ company_name }}" class="logo"></div>
+    {% else %}
+      <div class="center big">{{ company_name }}</div>
+    {% endif %}
     <div class="center muted">{{ titre }}</div>
     <div class="sep"></div>
 
