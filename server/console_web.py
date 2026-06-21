@@ -125,6 +125,52 @@ def _replication_loop(data_dir: Path) -> None:
         time.sleep(interval)
 
 
+def _find_chrome() -> str:
+    """Chemin de chrome.exe si Chrome est installé, sinon chaîne vide."""
+    import shutil
+    candidates = [
+        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return shutil.which("chrome") or ""
+
+
+def _open_ui(url: str, data_dir: Path) -> None:
+    """Ouvre l'interface. Avec Chrome : mode caisse (impression directe du
+    ticket, sans boîte de dialogue). Sinon : navigateur par défaut."""
+    import subprocess
+    chrome = _find_chrome()
+    if chrome:
+        profile = str(data_dir / "ChromeCaisse")
+        try:
+            subprocess.Popen([
+                chrome,
+                "--kiosk-printing",            # window.print() imprime directement
+                f"--app={url}",                # fenêtre épurée, sans barre d'adresse
+                f"--user-data-dir={profile}",  # profil dédié, isolé du Chrome habituel
+                "--no-first-run",
+                "--no-default-browser-check",
+            ])
+            return
+        except Exception:
+            pass
+    webbrowser.open(url)
+
+
+def _server_already_running(port: int) -> bool:
+    """Vrai si une console répond déjà sur ce port (démarrage auto en arrière-plan)."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/login/", timeout=2):
+            return True
+    except Exception:
+        return False
+
+
 def main() -> int:
     # Console Windows souvent en cp1252 : force UTF-8 pour les messages
     # (coches, accents) sans faire planter le démarrage.
@@ -146,6 +192,13 @@ def main() -> int:
     else:
         data_dir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "EMAB GROUP" / "ConsoleWeb"
     data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Si une console tourne déjà (démarrage auto en arrière-plan), ne pas
+    # relancer le serveur : on ouvre simplement l'interface caisse et on quitte.
+    want_browser = not os.environ.get("EMAB_NO_BROWSER")
+    if want_browser and _server_already_running(PORT):
+        _open_ui(f"http://127.0.0.1:{PORT}/", data_dir)
+        return 0
 
     # Clé secrète persistante (sessions stables entre démarrages)
     key_file = data_dir / "secret_key.txt"
@@ -242,8 +295,8 @@ def main() -> int:
     print("Laissez cette fenêtre ouverte. Fermez-la pour arrêter la console.")
     print("=" * 62)
 
-    if not os.environ.get("EMAB_NO_BROWSER"):
-        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+    if want_browser:
+        threading.Timer(1.5, lambda: _open_ui(url, data_dir)).start()
     serve(application, host=HOST, port=PORT, threads=8)
     return 0
 
