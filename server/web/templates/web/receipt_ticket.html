@@ -94,6 +94,13 @@
     <div class="center muted" style="margin-top:6px;">. . .</div>
   </div>
 
-  {% if auto %}<script>window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 300); });</script>{% endif %}
+  {% if auto %}<script>
+    window.addEventListener('load', function () {
+      function closeSoon() { setTimeout(function () { try { window.close(); } catch (e) {} }, 500); }
+      // En mode caisse (Chrome --kiosk-printing), l'impression est immediate.
+      window.onafterprint = closeSoon;
+      setTimeout(function () { window.print(); closeSoon(); }, 250);
+    });
+  </script>{% endif %}
 </body>
 </html>

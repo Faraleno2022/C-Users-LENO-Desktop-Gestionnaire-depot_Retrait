@@ -4,7 +4,7 @@
 
 #define MyAppName "EMAB Console Web"
 #define MyAppPublisher "EMAB GROUP"
-#define MyAppVersion "1.0.4"
+#define MyAppVersion "1.0.5"
 #define MyAppExeName "EMAB-Console-Web.exe"
 
 [Setup]
@@ -32,6 +32,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; Coché par défaut : la console démarre avec Windows (minimisée, en arrière-plan)
 ; pour que la synchronisation soit toujours active sans intervention.
 Name: "startupicon"; Description: "Démarrer automatiquement avec Windows (synchronisation toujours active)"; GroupDescription: "Synchronisation :"
+; Raccourci « caisse » : ouvre la console dans Chrome en impression directe
+; (le ticket s'imprime sans boîte de dialogue). Visible seulement si Chrome est présent.
+Name: "caisseicon"; Description: "Créer le raccourci « EMAB Caisse » (impression directe du ticket)"; GroupDescription: "Caisse :"; Check: ChromeInstalled
 
 [Files]
 ; Mode onedir : on installe le dossier complet (démarrage rapide, pas
@@ -44,6 +47,10 @@ Source: "installer_assets\EMAB-Console-Web-demarrage.vbs"; DestDir: "{userstartu
 Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{userprograms}\Désinstaller {#MyAppName}"; Filename: "{uninstallexe}"
+; Raccourci caisse : Chrome en mode impression directe sur la console locale.
+Name: "{userdesktop}\EMAB Caisse"; Filename: "{code:GetChromePath}"; \
+  Parameters: "--kiosk-printing --app=""http://127.0.0.1:8765/"" --user-data-dir=""{localappdata}\EMAB GROUP\ChromeCaisse"" --no-first-run --no-default-browser-check"; \
+  IconFilename: "{app}\{#MyAppExeName}"; Tasks: caisseicon; Check: ChromeInstalled
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
@@ -54,3 +61,21 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 Type: filesandordirs; Name: "{app}"
 ; Retire le lanceur de démarrage automatique.
 Type: files; Name: "{userstartup}\EMAB-Console-Web-demarrage.vbs"
+
+[Code]
+{ Détecte Chrome via le registre (App Paths). Renvoie le chemin de chrome.exe. }
+function GetChromePath(Param: string): string;
+var
+  P: string;
+begin
+  Result := '';
+  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe', '', P) then
+    Result := P
+  else if RegQueryStringValue(HKCU, 'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe', '', P) then
+    Result := P;
+end;
+
+function ChromeInstalled: Boolean;
+begin
+  Result := GetChromePath('') <> '';
+end;
