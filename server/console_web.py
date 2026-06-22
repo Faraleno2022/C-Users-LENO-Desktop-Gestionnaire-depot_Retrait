@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -229,7 +229,7 @@ def main() -> int:
     print("Préparation de la base locale…")
     call_command("migrate", interactive=False, verbosity=0)
 
-    from sync.models import Device, RemoteUser
+    from sync.models import Client, Device, RemoteUser, Transaction
 
     render_cfg = _read_render_config(data_dir)
     render_ready = bool(
@@ -238,6 +238,24 @@ def main() -> int:
         and (render_cfg.get("token") or "").strip()
         and "COLLEZ-ICI" not in (render_cfg.get("token") or "")
     )
+
+    # Cohérence base <-> filigranes de synchronisation.
+    # Si la base ne contient aucune donnée métier (clients/transactions) mais
+    # que des filigranes existent, on les réinitialise : sinon le pull demande
+    # « ce qui est plus récent que X » et ne re-télécharge jamais les données
+    # déjà présentes sur le serveur (cas typique après suppression de la base).
+    state_file = data_dir / "render_sync_state.json"
+    if (
+        state_file.exists()
+        and not Client.objects.exists()
+        and not Transaction.objects.exists()
+    ):
+        try:
+            state_file.unlink()
+            print("Filigranes de sync réinitialisés (base vierge) : "
+                  "re-téléchargement complet depuis le serveur.")
+        except OSError:
+            pass
 
     # --- Synchronisation initiale (machine rejoignant un système existant) ---
     # Si la sync en ligne est déjà configurée et qu'aucun compte n'existe encore,
