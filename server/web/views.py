@@ -194,10 +194,11 @@ def _dashboard_stats() -> dict:
     return {
         "solde": solde,
         "depots_today": depots_today,
-        "retraits_today": retraits_today,
+        # « Sorties » = retraits d'espèces + ventes de produits (tout ce qui sort).
+        "sorties_today": float(retraits_today) + float(s_today),
+        "sorties_month": float(retraits_month) + float(s_month),
         "n_today": n_today,
         "depots_month": depots_month,
-        "retraits_month": retraits_month,
         "sales_today_total": s_today,
         "sales_today_count": n_sales_today,
         "sales_month_total": s_month,
@@ -293,8 +294,8 @@ def dashboard_stats_api(request):
     """Renvoie les chiffres du tableau de bord en JSON (rafraîchissement auto)."""
     s = _dashboard_stats()
     money_keys = {
-        "solde", "depots_today", "retraits_today", "depots_month",
-        "retraits_month", "sales_today_total", "sales_month_total", "stock_value",
+        "solde", "depots_today", "sorties_today", "depots_month",
+        "sorties_month", "sales_today_total", "sales_month_total", "stock_value",
     }
     out = {}
     for k, v in s.items():
