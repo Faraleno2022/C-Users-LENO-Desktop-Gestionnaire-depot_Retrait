@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.0.10"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -184,6 +184,63 @@ def _server_already_running(port: int) -> bool:
         return False
 
 
+def _apply_pending_update(data_dir: Path) -> bool:
+    """Si une mise à jour est téléchargée et en attente, l'installe puis relance.
+
+    Lancé au tout début (avant de démarrer le serveur) : on lance un petit script
+    qui attend la fermeture de cette console, applique l'installateur silencieux
+    (les données ne sont jamais touchées), puis relance la console à jour. Cela
+    rend la mise à jour automatique même sans démarrage Windows.
+
+    Retourne True si une mise à jour est en cours d'application (il faut alors
+    quitter immédiatement pour libérer l'exécutable).
+    """
+    if not getattr(sys, "frozen", False):
+        return False  # uniquement en .exe (pas en développement)
+    flag = data_dir / "update_pending.flag"
+    if not flag.exists():
+        return False
+    try:
+        installer = flag.read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    if not installer or not os.path.exists(installer):
+        try:
+            flag.unlink()
+        except OSError:
+            pass
+        return False
+
+    exe = sys.executable
+    bat = data_dir / "_apply_update.bat"
+    try:
+        bat.write_text(
+            "@echo off\r\n"
+            "ping 127.0.0.1 -n 3 >nul\r\n"  # ~2 s : laisser la console se fermer
+            f'"{installer}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n'
+            f'del "{installer}" >nul 2>&1\r\n'
+            f'del "{flag}" >nul 2>&1\r\n'
+            f'start "" "{exe}"\r\n'
+            'del "%~f0" >nul 2>&1\r\n',
+            encoding="utf-8",
+        )
+    except OSError:
+        return False
+
+    import subprocess
+    DETACHED_PROCESS = 0x00000008
+    CREATE_NO_WINDOW = 0x08000000
+    try:
+        subprocess.Popen(
+            ["cmd", "/c", str(bat)],
+            creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+            close_fds=True,
+        )
+    except Exception:
+        return False
+    return True
+
+
 def main() -> int:
     # Console Windows souvent en cp1252 : force UTF-8 pour les messages
     # (coches, accents) sans faire planter le démarrage.
@@ -209,8 +266,16 @@ def main() -> int:
     # Si une console tourne déjà (démarrage auto en arrière-plan), ne pas
     # relancer le serveur : on ouvre simplement l'interface caisse et on quitte.
     want_browser = not os.environ.get("EMAB_NO_BROWSER")
-    if want_browser and _server_already_running(PORT):
+    server_running = _server_already_running(PORT)
+    if want_browser and server_running:
         _open_ui(f"http://127.0.0.1:{PORT}/", data_dir)
+        return 0
+
+    # Mise à jour en attente ? On l'applique avant de démarrer le serveur
+    # (uniquement si aucune autre console ne tourne, pour ne pas la perturber).
+    # La console redémarrera toute seule en version à jour.
+    if not server_running and _apply_pending_update(data_dir):
+        print("Mise à jour détectée : installation en cours, la console va redémarrer…")
         return 0
 
     # Clé secrète persistante (sessions stables entre démarrages)
