@@ -117,9 +117,9 @@ class Command(BaseCommand):
         with db_transaction.atomic():
             for label, model in targets:
                 deleted, _ = model.objects.all().delete()
-                self.stdout.write(f"  ✓ {label} : effacé(s)")
+                self.stdout.write(f"  [OK] {label} : efface(s)")
 
-        self.stdout.write(self.style.SUCCESS("\nBase vidée. Système prêt à la mise à disposition."))
+        self.stdout.write(self.style.SUCCESS("\nBase videe. Systeme pret a la mise a disposition."))
         if not opts["include_accounts"]:
             self.stdout.write(
                 f"Comptes de connexion conservés : {RemoteUser.objects.count()}"
