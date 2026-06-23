@@ -254,9 +254,22 @@ def sync_now(request):
             "message": "Synchronisation en ligne désactivée sur ce poste.",
         })
 
+    # Synchronisation MANUELLE = re-synchronisation complète : on oublie les
+    # filigranes de pull pour re-télécharger TOUTES les données du serveur.
+    # Cela rattrape tout décalage si la sync automatique avait pris du retard
+    # (filigrane bloqué). On garde les filigranes de push pour ne pas tout
+    # ré-envoyer ; les enregistrements sont de toute façon idempotents (uuid).
+    state_path = data_dir / "render_sync_state.json"
+    try:
+        st = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+        st = {k: v for k, v in st.items() if not str(k).startswith("pull_")}
+        state_path.write_text(json.dumps(st), encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+
     try:
         from sync.replicator import Replicator
-        summary = Replicator(url, token, data_dir / "render_sync_state.json").run_once()
+        summary = Replicator(url, token, state_path).run_once()
     except Exception as e:
         return JsonResponse({
             "ok": False,

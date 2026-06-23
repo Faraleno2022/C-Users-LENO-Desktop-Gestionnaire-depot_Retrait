@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -103,6 +103,7 @@ def _replication_loop(data_dir: Path) -> None:
     from sync.replicator import ReplicationError, Replicator
 
     state_path = data_dir / "render_sync_state.json"
+    first_cycle = True
     while True:
         cfg = _read_render_config(data_dir)
         interval = max(3, int(cfg.get("interval_seconds") or 5))
@@ -110,6 +111,18 @@ def _replication_loop(data_dir: Path) -> None:
         url = (cfg.get("url") or "").strip()
         if cfg.get("enabled") and url and token and "COLLEZ-ICI" not in token:
             try:
+                if first_cycle:
+                    # Au premier cycle (démarrage), on oublie les filigranes de
+                    # pull pour re-télécharger TOUT le serveur : rattrape tout
+                    # décalage accumulé (filigrane bloqué). Les cycles suivants
+                    # restent incrémentaux (rapides).
+                    try:
+                        st = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+                        st = {k: v for k, v in st.items() if not str(k).startswith("pull_")}
+                        state_path.write_text(json.dumps(st), encoding="utf-8")
+                    except (OSError, ValueError):
+                        pass
+                    first_cycle = False
                 rep = Replicator(url, token, state_path)
                 summary = rep.run_once()
                 if summary:
