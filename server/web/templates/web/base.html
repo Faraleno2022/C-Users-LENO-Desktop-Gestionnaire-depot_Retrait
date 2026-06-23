@@ -77,6 +77,8 @@
       padding: .25rem .5rem;
     }
     .topbar-title { font-size: 1rem; font-weight: 600; color: #111827; }
+    @keyframes emab-spin { to { transform: rotate(360deg); } }
+    .spin { display: inline-block; animation: emab-spin .8s linear infinite; }
 
     /* ---------- Mode mobile / écran étroit ---------- */
     @media (max-width: 991.98px) {
@@ -213,6 +215,11 @@
         <i class="bi bi-list"></i>
       </button>
       <span class="topbar-title">{% block topbar_title %}{% endblock %}</span>
+      <button class="btn btn-outline-primary btn-sm ms-auto" id="syncNowBtn"
+              title="Synchroniser maintenant avec le serveur en ligne (importer + envoyer)">
+        <i class="bi bi-arrow-repeat" id="syncNowIcon"></i>
+        <span class="d-none d-sm-inline" id="syncNowText">Synchroniser</span>
+      </button>
     </header>
 
     <main class="app-content">
@@ -252,6 +259,39 @@
       });
     });
   })();
+
+  // Bouton « Synchroniser maintenant » : force un échange immédiat avec le serveur.
+  {% if user.is_authenticated %}
+  (function () {
+    var btn = document.getElementById('syncNowBtn');
+    if (!btn) return;
+    var icon = document.getElementById('syncNowIcon');
+    var text = document.getElementById('syncNowText');
+    function reset(label) {
+      btn.disabled = false;
+      if (icon) icon.classList.remove('spin');
+      if (text) text.textContent = label || 'Synchroniser';
+    }
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      if (icon) icon.classList.add('spin');
+      if (text) text.textContent = 'Sync…';
+      fetch("{% url 'web:sync_now' %}", { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.ok) {
+            if (text) text.textContent = 'À jour';
+            // Recharge pour afficher les données fraîchement importées.
+            setTimeout(function () { location.reload(); }, 500);
+          } else {
+            alert(d.message || 'Synchronisation impossible.');
+            reset();
+          }
+        })
+        .catch(function () { alert('Erreur réseau pendant la synchronisation.'); reset(); });
+    });
+  })();
+  {% endif %}
 </script>
 </body>
 </html>

@@ -9,6 +9,7 @@ urlpatterns = [
     path("logout/", views.logout_view, name="logout"),
     path("", views.dashboard, name="dashboard"),
     path("api/tableau-de-bord/", views.dashboard_stats_api, name="dashboard_stats_api"),
+    path("api/synchroniser/", views.sync_now, name="sync_now"),
     path("api/produits/recherche/", views.product_search_api, name="product_search_api"),
     path("transactions/", views.transactions, name="transactions"),
     path("transactions/<int:pk>/supprimer/", views.transaction_delete, name="transaction_delete"),

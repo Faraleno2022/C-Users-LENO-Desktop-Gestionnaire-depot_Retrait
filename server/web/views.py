@@ -1,6 +1,7 @@
 """Vues de la console web : consultation + édition catalogue/clients/comptes."""
 from __future__ import annotations
 
+import json
 import uuid as uuid_mod
 from datetime import date, datetime, time, timedelta
 from functools import wraps
@@ -213,6 +214,65 @@ def dashboard(request):
     ctx["recent_tx"] = Transaction.objects.filter(deleted=False).order_by("-created_at")[:10]
     ctx["remote"] = _remote(request)
     return render(request, "web/dashboard.html", ctx)
+
+
+@login_required(login_url="web:login")
+def sync_now(request):
+    """Force une synchronisation immédiate avec le serveur en ligne (console locale).
+
+    Importe les nouveautés du serveur ET envoie les opérations locales, sans
+    attendre le cycle automatique. N'a d'effet que sur une console locale
+    (base SQLite) configurée pour la réplication ; sur le serveur central
+    (Postgres), il n'y a rien à synchroniser.
+    """
+    from pathlib import Path as _Path
+
+    from django.conf import settings as _settings
+
+    db = _settings.DATABASES.get("default", {})
+    if "sqlite" not in (db.get("ENGINE") or ""):
+        return JsonResponse({
+            "ok": False,
+            "message": "Vous êtes sur le serveur central : les données y sont déjà à jour.",
+        })
+
+    data_dir = _Path(db.get("NAME")).resolve().parent
+    cfg_path = data_dir / "render_sync.json"
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return JsonResponse({
+            "ok": False,
+            "message": "Synchronisation en ligne non configurée sur ce poste.",
+        })
+
+    url = (cfg.get("url") or "").strip()
+    token = (cfg.get("token") or "").strip()
+    if not (cfg.get("enabled") and url and token and "COLLEZ-ICI" not in token):
+        return JsonResponse({
+            "ok": False,
+            "message": "Synchronisation en ligne désactivée sur ce poste.",
+        })
+
+    try:
+        from sync.replicator import Replicator
+        summary = Replicator(url, token, data_dir / "render_sync_state.json").run_once()
+    except Exception as e:
+        return JsonResponse({
+            "ok": False,
+            "message": f"Serveur en ligne injoignable ({type(e).__name__}). Vérifiez internet.",
+        })
+
+    received = sum(v["inserted"] + v["updated"] for v in summary.values())
+    sent = sum(v["pushed"] for v in summary.values())
+    _log_audit(request, "sync_manual", target_type="sync",
+               details=f"recu={received} envoye={sent}")
+    return JsonResponse({
+        "ok": True,
+        "received": received,
+        "sent": sent,
+        "message": f"Synchronisé : {received} reçu(s), {sent} envoyé(s).",
+    })
 
 
 @login_required(login_url="web:login")
