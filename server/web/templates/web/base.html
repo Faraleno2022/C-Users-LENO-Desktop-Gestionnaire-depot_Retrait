@@ -220,6 +220,17 @@
         <i class="bi bi-arrow-repeat" id="syncNowIcon"></i>
         <span class="d-none d-sm-inline" id="syncNowText">Synchroniser</span>
       </button>
+      {% if is_local_console %}
+      <form method="post" action="{% url 'web:quit_app' %}" class="d-inline"
+            onsubmit="return confirm('Fermer complètement l\'application ? La synchronisation s\'arrêtera jusqu\'au prochain démarrage.');">
+        {% csrf_token %}
+        <button class="btn btn-outline-danger btn-sm" type="submit"
+                title="Fermer complètement l'application (arrête le serveur et la synchronisation)">
+          <i class="bi bi-power"></i>
+          <span class="d-none d-sm-inline">Quitter</span>
+        </button>
+      </form>
+      {% endif %}
     </header>
 
     <main class="app-content">

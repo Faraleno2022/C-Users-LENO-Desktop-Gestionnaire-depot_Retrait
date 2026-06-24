@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EMAB GROUP — Fermeture</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    body { background:#f3f4f6; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .quit-card { background:#fff; border-radius:.75rem; padding:2.5rem; max-width:440px;
+                 box-shadow:0 6px 24px rgba(0,0,0,.08); text-align:center; }
+    .quit-icon { font-size:3rem; }
+  </style>
+</head>
+<body>
+  <div class="quit-card">
+    {% if confirm %}
+      <div class="quit-icon text-danger"><i class="bi bi-power"></i></div>
+      <h1 class="h4 mt-2 mb-2">Fermer l'application ?</h1>
+      <p class="text-muted">
+        Le serveur local et la synchronisation s'arrêteront.
+        Vous pourrez tout relancer via l'icône <strong>EMAB Console Web</strong>.
+      </p>
+      <form method="post" action="{% url 'web:quit_app' %}" class="d-flex gap-2 justify-content-center mt-3">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-danger">
+          <i class="bi bi-power"></i> Oui, fermer
+        </button>
+        <a href="{% url 'web:dashboard' %}" class="btn btn-secondary">Annuler</a>
+      </form>
+    {% else %}
+      <div class="quit-icon text-success"><i class="bi bi-check-circle"></i></div>
+      <h1 class="h4 mt-2 mb-2">Application fermée</h1>
+      <p class="text-muted">Le serveur et la synchronisation sont arrêtés.
+        Vous pouvez fermer cette fenêtre.</p>
+      <script>
+        // Fenêtre ouverte en mode application : on tente de la fermer.
+        setTimeout(function () { try { window.close(); } catch (e) {} }, 500);
+      </script>
+    {% endif %}
+  </div>
+</body>
+</html>

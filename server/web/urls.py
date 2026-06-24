@@ -42,4 +42,5 @@ urlpatterns = [
     path("utilisateurs/<int:pk>/basculer/", views.user_toggle, name="user_toggle"),
     path("journal/", views.audit_journal, name="journal"),
     path("rapports/", views.reports_view, name="reports"),
+    path("quitter/", views.quit_app, name="quit_app"),
 ]

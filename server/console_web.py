@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.11"
+APP_VERSION = "1.0.12"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -309,6 +309,9 @@ def main() -> int:
     )
     os.environ.setdefault("DJANGO_STATIC_ROOT", str(base / "staticfiles"))
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
+    # Marque cette instance comme « console locale » : autorise le bouton
+    # « Quitter » (arret du serveur). Jamais positionne sur le serveur Render.
+    os.environ["EMAB_LOCAL_CONSOLE"] = "1"
 
     import django
 

@@ -1861,3 +1861,27 @@ def user_toggle(request, pk):
             f"Compte « {target.identifiant} » {'activé' if target.actif else 'désactivé'}.",
         )
     return redirect("web:users")
+
+
+@login_required
+def quit_app(request):
+    """Arrête complètement la console locale (serveur + synchronisation).
+
+    Disponible UNIQUEMENT sur la console locale : console_web.py positionne la
+    variable d'environnement EMAB_LOCAL_CONSOLE=1. Sur le serveur en ligne
+    (Render), cette vue est interdite — il ne faut surtout pas y arrêter le
+    serveur partagé.
+    """
+    import os
+
+    if os.environ.get("EMAB_LOCAL_CONSOLE") != "1":
+        return HttpResponseForbidden("Indisponible sur le serveur en ligne.")
+    if request.method != "POST":
+        # Page de confirmation (accès direct par URL).
+        return render(request, "web/quit.html", {"confirm": True})
+
+    # Arrêt différé : on laisse le temps de renvoyer la page avant de couper
+    # le processus (serveur waitress + threads de synchronisation).
+    import threading
+    threading.Timer(0.6, lambda: os._exit(0)).start()
+    return render(request, "web/quit.html", {"confirm": False})
