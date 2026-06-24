@@ -32,6 +32,7 @@ End If
 sh.Environment("Process")("EMAB_NO_BROWSER") = "1"
 exePath = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Programs\EMAB Console Web\EMAB-Console-Web.exe"
 If fso.FileExists(exePath) Then
-    ' 7 = fenetre minimisee, sans prendre le focus
-    sh.Run """" & exePath & """", 7, False
+    ' 0 = fenetre cachee (la console est de toute facon compilee en mode
+    ' fenetre : aucune fenetre noire ne s'affiche pour l'utilisateur).
+    sh.Run """" & exePath & """", 0, False
 End If

@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.10"
+APP_VERSION = "1.0.11"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -262,6 +262,21 @@ def main() -> int:
     else:
         data_dir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "EMAB GROUP" / "ConsoleWeb"
     data_dir.mkdir(parents=True, exist_ok=True)
+
+    # En mode fenetre (console=False), aucune fenetre noire ne s'affiche chez
+    # l'utilisateur, mais sys.stdout / sys.stderr valent None : on les redirige
+    # vers un fichier log pour (a) eviter que print() ne plante, (b) garder une
+    # trace consultable en cas de probleme (data_dir\console.log).
+    if sys.stdout is None or sys.stderr is None:
+        try:
+            _logf = open(data_dir / "console.log", "w", encoding="utf-8", buffering=1)
+        except OSError:
+            import io
+            _logf = io.StringIO()
+        if sys.stdout is None:
+            sys.stdout = _logf
+        if sys.stderr is None:
+            sys.stderr = _logf
 
     # Si une console tourne déjà (démarrage auto en arrière-plan), ne pas
     # relancer le serveur : on ouvre simplement l'interface caisse et on quitte.
