@@ -1,0 +1,94 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Stock à valider{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center mb-3">
+  <h1 class="h3 me-3 mb-0"><i class="bi bi-check2-square"></i> Entrées de stock à valider</h1>
+  <span class="text-muted">{{ pending_count }} demande(s) en attente</span>
+</div>
+
+{% if messages %}
+  {% for m in messages %}
+    <div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>
+  {% endfor %}
+{% endif %}
+
+<ul class="nav nav-pills mb-3">
+  <li class="nav-item">
+    <a class="nav-link {% if statut == 'en_attente' %}active{% endif %}" href="?statut=en_attente">En attente</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if statut == 'valide' %}active{% endif %}" href="?statut=valide">Validées</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if statut == 'rejete' %}active{% endif %}" href="?statut=rejete">Rejetées</a>
+  </li>
+</ul>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Produit</th>
+          <th class="text-end">Quantité</th>
+          <th>Motif</th>
+          <th>Demandé par</th>
+          {% if statut == 'en_attente' %}
+            <th class="text-end">Décision</th>
+          {% else %}
+            <th>Traité par</th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for req in page_obj %}
+          <tr>
+            <td>{{ req.created_at|date:"Y-m-d H:i" }}</td>
+            <td>{{ req.product_nom }}</td>
+            <td class="text-end fw-bold text-success">+{{ req.quantite|num }}</td>
+            <td>{{ req.motif|default:"—" }}</td>
+            <td>{{ req.requested_by_nom|default:"—" }}</td>
+            {% if statut == 'en_attente' %}
+              <td class="text-end">
+                <form method="post" action="{% url 'web:stock_request_validate' req.pk %}" class="d-inline"
+                      onsubmit="return confirm('Valider cette entrée ? Le stock du produit sera augmenté de {{ req.quantite|num }}.');">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-sm btn-success" title="Valider et entrer en stock">
+                    <i class="bi bi-check-lg"></i> Valider
+                  </button>
+                </form>
+                <button type="button" class="btn btn-sm btn-outline-danger"
+                        data-bs-toggle="collapse" data-bs-target="#reject{{ req.pk }}" title="Rejeter">
+                  <i class="bi bi-x-lg"></i> Rejeter
+                </button>
+                <div class="collapse mt-2 text-start" id="reject{{ req.pk }}">
+                  <form method="post" action="{% url 'web:stock_request_reject' req.pk %}" class="d-flex gap-1">
+                    {% csrf_token %}
+                    <input type="text" name="motif" class="form-control form-control-sm" placeholder="Motif du rejet (optionnel)">
+                    <button type="submit" class="btn btn-sm btn-danger">Confirmer le rejet</button>
+                  </form>
+                </div>
+              </td>
+            {% else %}
+              <td>
+                {{ req.validated_by_nom|default:"—" }}
+                {% if req.validated_at %}<div class="text-muted small">{{ req.validated_at|date:"Y-m-d H:i" }}</div>{% endif %}
+                {% if req.statut == 'rejete' and req.decision_motif %}
+                  <div class="text-danger small">Motif : {{ req.decision_motif }}</div>
+                {% endif %}
+              </td>
+            {% endif %}
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-4">Aucune demande dans cette catégorie.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% include "web/_pagination.html" %}
+{% endblock %}

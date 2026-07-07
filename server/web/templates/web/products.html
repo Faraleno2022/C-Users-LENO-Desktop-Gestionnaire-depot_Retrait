@@ -53,7 +53,7 @@
           <th class="text-end">Seuil</th>
           <th class="text-end">Valeur</th>
           <th>Statut</th>
-          {% if can_edit %}<th class="text-end">Actions</th>{% endif %}
+          {% if can_edit or can_request %}<th class="text-end">Actions</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -90,10 +90,17 @@
                   </button>
                 </form>
               </td>
+            {% elif can_request %}
+              <td class="text-end">
+                <a href="{% url 'web:stock_entry_request' p.pk %}" class="btn btn-sm btn-outline-success"
+                   title="Demander une entrée de stock (à valider par un administrateur)">
+                  <i class="bi bi-box-arrow-in-down"></i> Demander une entrée
+                </a>
+              </td>
             {% endif %}
           </tr>
         {% empty %}
-          <tr><td colspan="{% if can_edit %}8{% else %}7{% endif %}" class="text-center text-muted py-4">Aucun produit.</td></tr>
+          <tr><td colspan="{% if can_edit or can_request %}8{% else %}7{% endif %}" class="text-center text-muted py-4">Aucun produit.</td></tr>
         {% endfor %}
       </tbody>
     </table>

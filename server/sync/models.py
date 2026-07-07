@@ -197,6 +197,56 @@ class Client(SyncedModel):
         return f"{self.matricule} ({self.nom})" if self.nom else self.matricule
 
 
+class StockEntryRequest(models.Model):
+    """Demande d'entrée de stock saisie par un agent, à valider par un admin.
+
+    Modèle SERVEUR-UNIQUEMENT (console web) : il n'est PAS dans TABLE_MODELS,
+    donc jamais synchronisé vers les postes. Tant qu'une demande est « en
+    attente », elle n'affecte pas le stock réel — elle n'est donc pas utilisable.
+
+    À la validation par un admin, un StockMovement (entrée) est créé et le stock
+    du produit est incrémenté ; ces deux-là, eux, se répliquent normalement vers
+    les postes. Une demande rejetée ne modifie jamais le stock.
+    """
+
+    STATUT_CHOICES = [
+        ("en_attente", "En attente"),
+        ("valide", "Validée"),
+        ("rejete", "Rejetée"),
+    ]
+
+    product = models.ForeignKey(
+        Product, on_delete=models.CASCADE, related_name="entry_requests"
+    )
+    # Instantané du nom au moment de la demande (robustesse d'affichage).
+    product_nom = models.CharField(max_length=200)
+    quantite = models.FloatField()
+    motif = models.CharField(max_length=255, blank=True, default="")
+    statut = models.CharField(
+        max_length=12, choices=STATUT_CHOICES, default="en_attente", db_index=True
+    )
+    # Agent demandeur
+    requested_by_identifiant = models.CharField(max_length=120, blank=True, default="")
+    requested_by_nom = models.CharField(max_length=200, blank=True, default="")
+    requested_by_uuid = models.CharField(max_length=36, blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    # Décision admin
+    validated_by_identifiant = models.CharField(max_length=120, blank=True, default="")
+    validated_by_nom = models.CharField(max_length=200, blank=True, default="")
+    validated_at = models.DateTimeField(null=True, blank=True)
+    decision_motif = models.CharField(max_length=255, blank=True, default="")
+    # uuid du StockMovement créé à la validation (traçabilité).
+    resulting_movement_uuid = models.CharField(max_length=36, blank=True, default="")
+
+    class Meta:
+        verbose_name = "Demande d'entrée de stock"
+        verbose_name_plural = "Demandes d'entrée de stock"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.product_nom} +{self.quantite:g} [{self.statut}]"
+
+
 # Correspondance nom de table (poste) -> modèle serveur + champs acceptés.
 TABLE_MODELS = {
     "users": (RemoteUser, [

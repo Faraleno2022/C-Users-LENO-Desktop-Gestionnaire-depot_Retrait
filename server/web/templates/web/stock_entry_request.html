@@ -1,0 +1,45 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Demande d'entrée de stock{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6">
+    <h1 class="h3 mb-3"><i class="bi bi-box-arrow-in-down"></i> Demande d'entrée de stock</h1>
+
+    <div class="card mb-3 p-3">
+      <strong>{{ product.nom }}</strong>
+      {% if product.reference %}<span class="text-muted">({{ product.reference }})</span>{% endif %}
+      <div class="mt-1">Stock actuel : <strong>{{ product.quantite_stock|num }}</strong> ·
+        Seuil : {{ product.seuil_alerte|num }}</div>
+    </div>
+
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+
+    <div class="alert alert-info small">
+      <i class="bi bi-info-circle"></i>
+      Votre saisie crée une <strong>demande</strong> : la quantité n'entrera
+      réellement en stock qu'après <strong>validation par un administrateur</strong>.
+      Tant qu'elle n'est pas validée, le stock reste inchangé.
+    </div>
+
+    <form method="post" class="card p-4 shadow-sm">
+      {% csrf_token %}
+      <div class="mb-3">
+        <label class="form-label">Quantité à entrer <span class="text-danger">*</span></label>
+        <input type="number" step="1" min="1" name="quantite" class="form-control form-control-lg" required autofocus>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Motif</label>
+        <input type="text" name="motif" class="form-control" placeholder="ex : Livraison fournisseur · Retour · Réapprovisionnement">
+      </div>
+      <div class="d-flex gap-2 mt-2">
+        <button type="submit" class="btn btn-success">
+          <i class="bi bi-send"></i> Envoyer la demande
+        </button>
+        <a href="{% url 'web:products' %}" class="btn btn-secondary">Annuler</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

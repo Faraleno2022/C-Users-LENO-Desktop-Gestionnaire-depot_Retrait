@@ -17,7 +17,10 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
-from sync.models import AuditLog, Client, Device, Product, RemoteUser, Sale, StockMovement, Transaction
+from sync.models import (
+    AuditLog, Client, Device, Product, RemoteUser, Sale, StockEntryRequest,
+    StockMovement, Transaction,
+)
 from web import reports as web_reports
 from web.reports import build_excel, build_pdf, _fmt_money, _fmt_num
 
@@ -882,6 +885,9 @@ def products(request):
         "only_low": only_low,
         "remote": r,
         "can_edit": can_edit,
+        # Les agents (non-admin) ne saisissent pas directement : ils demandent
+        # une entrée, qu'un admin valide ensuite.
+        "can_request": not can_edit,
     })
 
 
@@ -1100,6 +1106,172 @@ def product_toggle(request, pk):
             f"Produit « {product.nom} » {'activé' if product.actif else 'désactivé'}.",
         )
     return redirect("web:products")
+
+
+# --- Circuit de validation des entrées de stock (agent saisit → admin valide) -
+
+def _current_remote_user(request):
+    """Fiche RemoteUser (la plus récente) correspondant à l'utilisateur connecté."""
+    ident = _remote(request).get("identifiant")
+    if not ident:
+        return None
+    return RemoteUser.objects.filter(identifiant=ident).order_by("-id").first()
+
+
+@login_required(login_url="web:login")
+def stock_entry_request(request, pk):
+    """Un agent (ou un admin) demande une ENTRÉE de stock pour un produit.
+
+    La demande est enregistrée « en attente » : elle n'affecte PAS le stock réel
+    tant qu'un administrateur ne l'a pas validée (cf. stock_request_validate).
+    """
+    product = get_object_or_404(Product, pk=pk)
+    error = None
+    if request.method == "POST":
+        try:
+            qte_raw = (request.POST.get("quantite") or "").strip().replace(" ", "")
+            quantite = float(qte_raw)
+            if quantite <= 0:
+                raise ValueError("La quantité doit être strictement positive.")
+            motif = (request.POST.get("motif") or "").strip()
+            agent = _current_remote_user(request)
+            r = _remote(request)
+            StockEntryRequest.objects.create(
+                product=product,
+                product_nom=product.nom,
+                quantite=quantite,
+                motif=motif,
+                statut="en_attente",
+                requested_by_identifiant=r.get("identifiant") or "",
+                requested_by_nom=(agent.nom_complet if agent else r.get("nom_complet") or ""),
+                requested_by_uuid=(agent.uuid if agent else ""),
+            )
+            _log_audit(
+                request, "stock_entry_request", target_type="product",
+                target_id=product.uuid,
+                details=f"{product.nom} : demande entrée {quantite:g}"
+                + (f" — {motif}" if motif else ""),
+            )
+            messages.success(
+                request,
+                f"Demande d'entrée de {quantite:g} pour « {product.nom} » envoyée. "
+                "Elle sera effective après validation par un administrateur.",
+            )
+            return redirect("web:products")
+        except (ValueError, TypeError) as e:
+            error = str(e)
+    return render(request, "web/stock_entry_request.html", {
+        "product": product,
+        "error": error,
+        "remote": _remote(request),
+    })
+
+
+@login_required(login_url="web:login")
+@role_required("super_admin", "admin")
+def stock_validations(request):
+    """Liste des demandes d'entrée de stock à valider (admin)."""
+    statut = (request.GET.get("statut") or "en_attente").strip()
+    qs = StockEntryRequest.objects.select_related("product")
+    if statut in ("en_attente", "valide", "rejete"):
+        qs = qs.filter(statut=statut)
+    page_obj = _paginate(request, qs)
+    return render(request, "web/stock_validations.html", {
+        "page_obj": page_obj,
+        "statut": statut,
+        "pending_count": StockEntryRequest.objects.filter(statut="en_attente").count(),
+        "remote": _remote(request),
+    })
+
+
+@login_required(login_url="web:login")
+@role_required("super_admin", "admin")
+def stock_request_validate(request, pk):
+    """Valide une demande : crée le mouvement d'entrée et incrémente le stock réel."""
+    req = get_object_or_404(StockEntryRequest, pk=pk)
+    if request.method != "POST":
+        return redirect("web:stock_validations")
+    if req.statut != "en_attente":
+        messages.warning(request, "Cette demande a déjà été traitée.")
+        return redirect("web:stock_validations")
+
+    product = req.product
+    current_stock = float(product.quantite_stock or 0)
+    new_stock = current_stock + float(req.quantite)
+
+    # Mouvement crédité à l'agent qui a saisi l'entrée (traçabilité terrain).
+    mv = StockMovement.objects.create(
+        uuid=str(uuid_mod.uuid4()),
+        product_id=product.id,
+        product_uuid=product.uuid,
+        product_nom=product.nom,
+        type="entree",
+        quantite=req.quantite,
+        stock_apres=new_stock,
+        motif=(req.motif or "Entrée validée"),
+        sale_id=None,
+        agent_id=None,
+        agent_uuid=req.requested_by_uuid,
+        agent_nom=req.requested_by_nom or "—",
+        created_at=_iso_now(),
+    )
+    product.quantite_stock = new_stock
+    product.updated_at = _iso_now()
+    product.save()
+
+    r = _remote(request)
+    req.statut = "valide"
+    req.validated_by_identifiant = r.get("identifiant") or ""
+    req.validated_by_nom = r.get("nom_complet") or ""
+    req.validated_at = timezone.now()
+    req.resulting_movement_uuid = mv.uuid
+    req.save()
+
+    _log_audit(
+        request, "stock_entry_validate", target_type="product",
+        target_id=product.uuid,
+        details=f"{product.nom} : entrée validée {req.quantite:g} → {new_stock:g} "
+        f"(demandée par {req.requested_by_nom or '—'})",
+    )
+    messages.success(
+        request,
+        f"Entrée de {req.quantite:g} validée pour « {product.nom} ». "
+        f"Stock réel : {new_stock:g}.",
+    )
+    return redirect("web:stock_validations")
+
+
+@login_required(login_url="web:login")
+@role_required("super_admin", "admin")
+def stock_request_reject(request, pk):
+    """Rejette une demande : aucune incidence sur le stock."""
+    req = get_object_or_404(StockEntryRequest, pk=pk)
+    if request.method != "POST":
+        return redirect("web:stock_validations")
+    if req.statut != "en_attente":
+        messages.warning(request, "Cette demande a déjà été traitée.")
+        return redirect("web:stock_validations")
+
+    r = _remote(request)
+    req.statut = "rejete"
+    req.decision_motif = (request.POST.get("motif") or "").strip()
+    req.validated_by_identifiant = r.get("identifiant") or ""
+    req.validated_by_nom = r.get("nom_complet") or ""
+    req.validated_at = timezone.now()
+    req.save()
+
+    _log_audit(
+        request, "stock_entry_reject", target_type="product",
+        target_id=req.product.uuid,
+        details=f"{req.product_nom} : entrée refusée {req.quantite:g}"
+        + (f" — {req.decision_motif}" if req.decision_motif else ""),
+    )
+    messages.info(
+        request,
+        f"Demande d'entrée de {req.quantite:g} pour « {req.product_nom} » rejetée. "
+        "Le stock n'a pas été modifié.",
+    )
+    return redirect("web:stock_validations")
 
 
 @login_required(login_url="web:login")

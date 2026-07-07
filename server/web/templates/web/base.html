@@ -168,6 +168,12 @@
         <i class="bi bi-arrow-down-up"></i> Mouvements de stock
       </a>
       {% if request.session.remote_user.role == 'super_admin' or request.session.remote_user.role == 'admin' %}
+      <a href="{% url 'web:stock_validations' %}" class="sidebar-link {% if request.resolver_match.url_name == 'stock_validations' %}active{% endif %}">
+        <i class="bi bi-check2-square"></i> Stock à valider
+        {% if pending_stock_count %}<span class="badge bg-danger rounded-pill ms-auto">{{ pending_stock_count }}</span>{% endif %}
+      </a>
+      {% endif %}
+      {% if request.session.remote_user.role == 'super_admin' or request.session.remote_user.role == 'admin' %}
       <a href="{% url 'web:inventory' %}" class="sidebar-link {% if request.resolver_match.url_name == 'inventory' %}active{% endif %}">
         <i class="bi bi-clipboard-check"></i> Inventaire
       </a>
