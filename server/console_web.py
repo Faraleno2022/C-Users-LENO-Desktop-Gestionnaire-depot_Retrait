@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.12"
+APP_VERSION = "1.0.13"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -152,6 +152,115 @@ def _find_chrome() -> str:
     return shutil.which("chrome") or ""
 
 
+def _windows_printers() -> tuple[str, list[str]]:
+    """(imprimante Windows par défaut, liste des imprimantes installées).
+
+    Utilise l'API winspool via ctypes (aucune dépendance). En cas d'échec,
+    renvoie des valeurs vides : l'appelant se rabat sur le comportement actuel.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    default, names = "", []
+    try:
+        winspool = ctypes.WinDLL("winspool.drv")
+
+        n = wintypes.DWORD(0)
+        winspool.GetDefaultPrinterW(None, ctypes.byref(n))
+        if n.value:
+            buf = ctypes.create_unicode_buffer(n.value)
+            if winspool.GetDefaultPrinterW(buf, ctypes.byref(n)):
+                default = buf.value or ""
+
+        class PRINTER_INFO_4W(ctypes.Structure):
+            _fields_ = [
+                ("pPrinterName", wintypes.LPWSTR),
+                ("pServerName", wintypes.LPWSTR),
+                ("Attributes", wintypes.DWORD),
+            ]
+
+        PRINTER_ENUM_LOCAL, PRINTER_ENUM_CONNECTIONS = 2, 4
+        flags = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS
+        needed, count = wintypes.DWORD(0), wintypes.DWORD(0)
+        winspool.EnumPrintersW(flags, None, 4, None, 0,
+                               ctypes.byref(needed), ctypes.byref(count))
+        if needed.value:
+            raw = ctypes.create_string_buffer(needed.value)
+            if winspool.EnumPrintersW(flags, None, 4, raw, needed,
+                                      ctypes.byref(needed), ctypes.byref(count)):
+                arr = ctypes.cast(raw, ctypes.POINTER(PRINTER_INFO_4W * count.value)).contents
+                names = [p.pPrinterName for p in arr if p.pPrinterName]
+    except Exception:
+        pass
+    return default, names
+
+
+def _pick_receipt_printer() -> str:
+    """Nom de la meilleure imprimante physique pour les tickets, sinon ''.
+
+    Écarte les imprimantes virtuelles (Print to PDF, XPS, OneNote, Fax…) qui
+    font apparaître une boîte « Enregistrer en PDF » au lieu d'imprimer.
+    """
+    virtual = ("pdf", "xps", "onenote", "fax", "anydesk")
+    thermal = ("pos", "thermal", "ticket", "receipt", "caisse", "58mm", "80mm", "xprinter", "rongta")
+
+    def is_virtual(name: str) -> bool:
+        low = name.lower()
+        return any(k in low for k in virtual)
+
+    def is_thermal(name: str) -> bool:
+        low = name.lower()
+        return any(k in low for k in thermal)
+
+    default, names = _windows_printers()
+    # 1) Une imprimante à tickets (thermique) installée passe en priorité.
+    for name in names:
+        if not is_virtual(name) and is_thermal(name):
+            return name
+    # 2) Sinon l'imprimante par défaut de Windows, si elle est physique.
+    if default and not is_virtual(default):
+        return default
+    # 3) Sinon la première imprimante physique trouvée.
+    for name in names:
+        if not is_virtual(name):
+            return name
+    return ""
+
+
+def _seed_kiosk_printer(profile_dir: str) -> None:
+    """Force l'imprimante des tickets dans le profil Chrome « caisse ».
+
+    Avec --kiosk-printing, Chrome imprime sans dialogue vers la dernière
+    destination mémorisée du profil ; sur un profil neuf (ou si l'utilisateur
+    a un jour choisi « Enregistrer au format PDF »), c'est le PDF qui sort.
+    On écrit donc la vraie imprimante dans les préférences avant de lancer.
+    """
+    printer = _pick_receipt_printer()
+    if not printer:
+        return
+    try:
+        prefs_path = Path(profile_dir) / "Default" / "Preferences"
+        prefs_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            prefs = {}
+        app_state = {
+            "version": 2,
+            "recentDestinations": [{"id": printer, "origin": "local", "account": ""}],
+            "selectedDestinationId": printer,
+            "selectedDestinationOrigin": "local",
+        }
+        prefs.setdefault("printing", {}).setdefault(
+            "print_preview_sticky_settings", {}
+        )["appState"] = json.dumps(app_state)
+        prefs_path.write_text(
+            json.dumps(prefs, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
 def _open_ui(url: str, data_dir: Path) -> None:
     """Ouvre l'interface. Avec Chrome : mode caisse (impression directe du
     ticket, sans boîte de dialogue). Sinon : navigateur par défaut."""
@@ -159,6 +268,7 @@ def _open_ui(url: str, data_dir: Path) -> None:
     chrome = _find_chrome()
     if chrome:
         profile = str(data_dir / "ChromeCaisse")
+        _seed_kiosk_printer(profile)
         try:
             subprocess.Popen([
                 chrome,
