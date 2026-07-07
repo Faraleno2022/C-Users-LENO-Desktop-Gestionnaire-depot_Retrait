@@ -1,6 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
+
 from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_submodules
+
+# Rend les paquets locaux (web, core, sync) importables pendant l'analyse :
+# sans cela, collect_data_files('web') est ignoré et les templates manquent
+# dans l'exe (TemplateDoesNotExist: web/login.html au premier écran).
+sys.path.insert(0, SPECPATH)
 
 datas = [('staticfiles', 'staticfiles')]
 hiddenimports = ['waitress', 'dj_database_url', 'dotenv', 'updater']
