@@ -215,13 +215,30 @@ class StockEntryRequest(models.Model):
         ("rejete", "Rejetée"),
     ]
 
+    KIND_CHOICES = [
+        ("entree", "Entrée sur produit existant"),
+        ("nouveau_produit", "Création d'un nouveau produit"),
+    ]
+
+    # Type de demande : entrée sur un produit existant, ou création d'un
+    # nouveau produit (dans ce cas `product` est vide tant que non validé).
+    kind = models.CharField(
+        max_length=16, choices=KIND_CHOICES, default="entree", db_index=True
+    )
     product = models.ForeignKey(
-        Product, on_delete=models.CASCADE, related_name="entry_requests"
+        Product, on_delete=models.CASCADE, related_name="entry_requests",
+        null=True, blank=True,
     )
     # Instantané du nom au moment de la demande (robustesse d'affichage).
     product_nom = models.CharField(max_length=200)
     quantite = models.FloatField()
     motif = models.CharField(max_length=255, blank=True, default="")
+    # Caractéristiques du NOUVEAU produit proposé (kind="nouveau_produit").
+    # Ignorées pour une entrée sur produit existant.
+    new_reference = models.CharField(max_length=80, blank=True, default="")
+    new_prix_unitaire = models.FloatField(default=0)
+    new_seuil_alerte = models.FloatField(default=0)
+    new_description = models.TextField(blank=True, default="")
     statut = models.CharField(
         max_length=12, choices=STATUT_CHOICES, default="en_attente", db_index=True
     )

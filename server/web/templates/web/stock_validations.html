@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="d-flex flex-wrap align-items-center mb-3">
-  <h1 class="h3 me-3 mb-0"><i class="bi bi-check2-square"></i> Entrées de stock à valider</h1>
+  <h1 class="h3 me-3 mb-0"><i class="bi bi-check2-square"></i> Stock à valider</h1>
   <span class="text-muted">{{ pending_count }} demande(s) en attente</span>
 </div>
 
@@ -47,7 +47,17 @@
         {% for req in page_obj %}
           <tr>
             <td>{{ req.created_at|date:"Y-m-d H:i" }}</td>
-            <td>{{ req.product_nom }}</td>
+            <td>
+              {{ req.product_nom }}
+              {% if req.kind == 'nouveau_produit' %}
+                <span class="badge bg-primary">Nouveau produit</span>
+                <div class="text-muted small">
+                  {% if req.new_reference %}Réf. {{ req.new_reference }} · {% endif %}
+                  Prix : {{ req.new_prix_unitaire|money }}
+                  {% if req.new_seuil_alerte %}· Seuil : {{ req.new_seuil_alerte|num }}{% endif %}
+                </div>
+              {% endif %}
+            </td>
             <td class="text-end fw-bold text-success">+{{ req.quantite|num }}</td>
             <td>{{ req.motif|default:"—" }}</td>
             <td>{{ req.requested_by_nom|default:"—" }}</td>

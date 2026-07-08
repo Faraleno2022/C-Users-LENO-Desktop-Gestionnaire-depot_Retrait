@@ -9,6 +9,11 @@
     <a href="{% url 'web:product_new' %}" class="btn btn-success">
       <i class="bi bi-plus-lg"></i> Nouveau produit
     </a>
+  {% elif can_request %}
+    <a href="{% url 'web:product_request_new' %}" class="btn btn-success"
+       title="Proposer un nouveau produit (à valider par un administrateur)">
+      <i class="bi bi-plus-lg"></i> Proposer un nouveau produit
+    </a>
   {% endif %}
 </div>
 

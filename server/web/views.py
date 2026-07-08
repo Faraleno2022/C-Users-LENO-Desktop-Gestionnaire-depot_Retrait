@@ -1168,6 +1168,76 @@ def stock_entry_request(request, pk):
 
 
 @login_required(login_url="web:login")
+def product_request_new(request):
+    """Un agent propose la création d'un NOUVEAU produit.
+
+    La proposition est « en attente » : le produit n'existe PAS tant qu'un
+    administrateur ne l'a pas validée (cf. stock_request_validate). À la
+    validation, le produit est créé et sa quantité initiale enregistrée comme
+    mouvement d'entrée.
+    """
+    error = None
+    if request.method == "POST":
+        try:
+            nom = (request.POST.get("nom") or "").strip()
+            if not nom:
+                raise ValueError("Le nom du produit est obligatoire.")
+            reference = (request.POST.get("reference") or "").strip()
+            prix = float(request.POST.get("prix_unitaire") or 0)
+            if prix < 0:
+                raise ValueError("Le prix doit être positif ou nul.")
+            seuil = float(request.POST.get("seuil_alerte") or 0)
+            qte = float((request.POST.get("quantite") or "0").strip().replace(" ", ""))
+            if qte < 0:
+                raise ValueError("La quantité initiale doit être positive ou nulle.")
+            description = (request.POST.get("description") or "").strip()
+            motif = (request.POST.get("motif") or "").strip()
+            # Anti-doublon : si un produit du même nom existe déjà, orienter vers
+            # une simple demande d'entrée (sauf si l'agent force).
+            if request.POST.get("force_create") != "1":
+                dup = _find_duplicate_product(nom, reference)
+                if dup is not None:
+                    raise ValueError(
+                        f"Un produit « {dup.nom} » semble déjà exister. Faites plutôt "
+                        "une « demande d'entrée » dessus, ou cochez « proposer quand "
+                        "même » si c'est réellement un autre produit."
+                    )
+            agent = _current_remote_user(request)
+            r = _remote(request)
+            StockEntryRequest.objects.create(
+                kind="nouveau_produit",
+                product=None,
+                product_nom=nom,
+                quantite=qte,
+                new_reference=reference,
+                new_prix_unitaire=prix,
+                new_seuil_alerte=seuil,
+                new_description=description,
+                motif=motif,
+                statut="en_attente",
+                requested_by_identifiant=r.get("identifiant") or "",
+                requested_by_nom=(agent.nom_complet if agent else r.get("nom_complet") or ""),
+                requested_by_uuid=(agent.uuid if agent else ""),
+            )
+            _log_audit(
+                request, "product_request_new", target_type="product", target_id="",
+                details=f"Proposition nouveau produit : {nom} (qté initiale {qte:g})",
+            )
+            messages.success(
+                request,
+                f"Proposition du produit « {nom} » envoyée. Il sera créé après "
+                "validation par un administrateur.",
+            )
+            return redirect("web:products")
+        except (ValueError, TypeError) as e:
+            error = str(e)
+    return render(request, "web/product_request_form.html", {
+        "error": error,
+        "remote": _remote(request),
+    })
+
+
+@login_required(login_url="web:login")
 @role_required("super_admin", "admin")
 def stock_validations(request):
     """Liste des demandes d'entrée de stock à valider (admin)."""
@@ -1195,49 +1265,94 @@ def stock_request_validate(request, pk):
         messages.warning(request, "Cette demande a déjà été traitée.")
         return redirect("web:stock_validations")
 
-    product = req.product
-    current_stock = float(product.quantite_stock or 0)
-    new_stock = current_stock + float(req.quantite)
+    now = _iso_now()
+    if req.kind == "nouveau_produit":
+        # Création du produit proposé par l'agent (refus de doublon strict).
+        if _find_duplicate_product(req.product_nom, req.new_reference) is not None:
+            messages.warning(
+                request,
+                f"Un produit « {req.product_nom} » existe déjà : validation annulée. "
+                "Rejetez cette proposition et faites une entrée sur le produit existant.",
+            )
+            return redirect("web:stock_validations")
+        product = Product.objects.create(
+            uuid=str(uuid_mod.uuid4()),
+            reference=req.new_reference,
+            nom=req.product_nom,
+            description=req.new_description,
+            prix_unitaire=req.new_prix_unitaire,
+            quantite_stock=0,
+            seuil_alerte=req.new_seuil_alerte,
+            actif=True,
+            created_at=now,
+            updated_at=now,
+        )
+    else:
+        product = req.product
+        if product is None:
+            messages.warning(request, "Produit introuvable pour cette demande.")
+            return redirect("web:stock_validations")
 
-    # Mouvement crédité à l'agent qui a saisi l'entrée (traçabilité terrain).
-    mv = StockMovement.objects.create(
-        uuid=str(uuid_mod.uuid4()),
-        product_id=product.id,
-        product_uuid=product.uuid,
-        product_nom=product.nom,
-        type="entree",
-        quantite=req.quantite,
-        stock_apres=new_stock,
-        motif=(req.motif or "Entrée validée"),
-        sale_id=None,
-        agent_id=None,
-        agent_uuid=req.requested_by_uuid,
-        agent_nom=req.requested_by_nom or "—",
-        created_at=_iso_now(),
-    )
-    product.quantite_stock = new_stock
-    product.updated_at = _iso_now()
-    product.save()
+    current_stock = float(product.quantite_stock or 0)
+    entree = float(req.quantite or 0)
+    new_stock = current_stock + entree
+
+    # Mouvement d'entrée (crédité à l'agent demandeur) — seulement si quantité > 0.
+    mv_uuid = ""
+    if entree > 0:
+        mv = StockMovement.objects.create(
+            uuid=str(uuid_mod.uuid4()),
+            product_id=product.id,
+            product_uuid=product.uuid,
+            product_nom=product.nom,
+            type="entree",
+            quantite=entree,
+            stock_apres=new_stock,
+            motif=(req.motif or ("Stock initial (nouveau produit)"
+                   if req.kind == "nouveau_produit" else "Entrée validée")),
+            sale_id=None,
+            agent_id=None,
+            agent_uuid=req.requested_by_uuid,
+            agent_nom=req.requested_by_nom or "—",
+            created_at=now,
+        )
+        mv_uuid = mv.uuid
+        product.quantite_stock = new_stock
+        product.updated_at = now
+        product.save()
 
     r = _remote(request)
     req.statut = "valide"
+    req.product = product  # rattache le produit créé (cas nouveau produit)
     req.validated_by_identifiant = r.get("identifiant") or ""
     req.validated_by_nom = r.get("nom_complet") or ""
     req.validated_at = timezone.now()
-    req.resulting_movement_uuid = mv.uuid
+    req.resulting_movement_uuid = mv_uuid
     req.save()
 
-    _log_audit(
-        request, "stock_entry_validate", target_type="product",
-        target_id=product.uuid,
-        details=f"{product.nom} : entrée validée {req.quantite:g} → {new_stock:g} "
-        f"(demandée par {req.requested_by_nom or '—'})",
-    )
-    messages.success(
-        request,
-        f"Entrée de {req.quantite:g} validée pour « {product.nom} ». "
-        f"Stock réel : {new_stock:g}.",
-    )
+    if req.kind == "nouveau_produit":
+        _log_audit(
+            request, "product_request_validate", target_type="product",
+            target_id=product.uuid,
+            details=f"Nouveau produit créé « {product.nom} » (stock initial {entree:g}) "
+            f"— proposé par {req.requested_by_nom or '—'}",
+        )
+        messages.success(
+            request,
+            f"Produit « {product.nom} » créé et validé. Stock initial : {new_stock:g}.",
+        )
+    else:
+        _log_audit(
+            request, "stock_entry_validate", target_type="product",
+            target_id=product.uuid,
+            details=f"{product.nom} : entrée validée {entree:g} → {new_stock:g} "
+            f"(demandée par {req.requested_by_nom or '—'})",
+        )
+        messages.success(
+            request,
+            f"Entrée de {entree:g} validée pour « {product.nom} ». "
+            f"Stock réel : {new_stock:g}.",
+        )
     return redirect("web:stock_validations")
 
 
@@ -1260,17 +1375,27 @@ def stock_request_reject(request, pk):
     req.validated_at = timezone.now()
     req.save()
 
+    est_nouveau = req.kind == "nouveau_produit"
     _log_audit(
-        request, "stock_entry_reject", target_type="product",
-        target_id=req.product.uuid,
-        details=f"{req.product_nom} : entrée refusée {req.quantite:g}"
+        request, "product_request_reject" if est_nouveau else "stock_entry_reject",
+        target_type="product",
+        target_id=(req.product.uuid if req.product else ""),
+        details=(f"Nouveau produit refusé : {req.product_nom}" if est_nouveau
+                 else f"{req.product_nom} : entrée refusée {req.quantite:g}")
         + (f" — {req.decision_motif}" if req.decision_motif else ""),
     )
-    messages.info(
-        request,
-        f"Demande d'entrée de {req.quantite:g} pour « {req.product_nom} » rejetée. "
-        "Le stock n'a pas été modifié.",
-    )
+    if est_nouveau:
+        messages.info(
+            request,
+            f"Proposition du produit « {req.product_nom} » rejetée. "
+            "Aucun produit n'a été créé.",
+        )
+    else:
+        messages.info(
+            request,
+            f"Demande d'entrée de {req.quantite:g} pour « {req.product_nom} » rejetée. "
+            "Le stock n'a pas été modifié.",
+        )
     return redirect("web:stock_validations")
 
 
