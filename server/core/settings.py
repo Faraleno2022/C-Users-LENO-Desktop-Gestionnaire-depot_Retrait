@@ -142,3 +142,27 @@ if not DEBUG:
     # Cookies "secure" désactivables pour la console locale servie en http://127.0.0.1
     SESSION_COOKIE_SECURE = _env_bool("DJANGO_COOKIE_SECURE", default=True)
     CSRF_COOKIE_SECURE = _env_bool("DJANGO_COOKIE_SECURE", default=True)
+
+# Journalisation : par défaut Django n'écrit PAS la trace d'une erreur 500
+# quand DEBUG=False (le handler console est filtré par require_debug_true).
+# On force l'écriture des erreurs de requête sur stderr — qui, dans la console
+# locale empaquetée, est redirigé vers %LOCALAPPDATA%\...\ConsoleWeb\console.log,
+# et sur Render est capturé dans les logs du service. Indispensable pour
+# diagnostiquer un 500 en production.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "[{asctime}] {levelname} {name}: {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "verbose"},
+    },
+    "loggers": {
+        # Trace complète des erreurs serveur (500), y compris en production.
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+    },
+}

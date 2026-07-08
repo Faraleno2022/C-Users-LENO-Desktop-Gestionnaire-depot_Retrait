@@ -4,7 +4,7 @@
 
 #define MyAppName "EMAB Console Web"
 #define MyAppPublisher "EMAB GROUP"
-#define MyAppVersion "1.0.15"
+#define MyAppVersion "1.0.16"
 #define MyAppExeName "EMAB-Console-Web.exe"
 
 [Setup]
@@ -23,6 +23,11 @@ OutputBaseFilename=EMAB-Console-Web-Setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; Ferme automatiquement la console si elle tourne encore, sinon l'exe est
+; verrouille et le remplacement echoue (« DeleteFile a echoue ; code 5 »).
+CloseApplications=yes
+CloseApplicationsFilter=*.exe
+RestartApplications=no
 
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"

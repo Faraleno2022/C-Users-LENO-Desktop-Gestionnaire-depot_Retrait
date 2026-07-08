@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.15"
+APP_VERSION = "1.0.16"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -324,9 +324,15 @@ def _apply_pending_update(data_dir: Path) -> bool:
     exe = sys.executable
     bat = data_dir / "_apply_update.bat"
     try:
+        exe_name = os.path.basename(exe)
         bat.write_text(
             "@echo off\r\n"
             "ping 127.0.0.1 -n 3 >nul\r\n"  # ~2 s : laisser la console se fermer
+            # Tue toute instance restante (serveur en arriere-plan, demarrage
+            # auto…) : sinon l'installateur ne peut pas remplacer l'exe verrouille
+            # (« DeleteFile a echoue ; code 5. Acces refuse »).
+            f'taskkill /IM "{exe_name}" /F >nul 2>&1\r\n'
+            "ping 127.0.0.1 -n 2 >nul\r\n"  # ~1 s : laisser le verrou se liberer
             f'"{installer}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n'
             f'del "{installer}" >nul 2>&1\r\n'
             f'del "{flag}" >nul 2>&1\r\n'
