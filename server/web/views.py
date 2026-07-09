@@ -1417,6 +1417,19 @@ def stock_request_reject(request, pk):
 
 
 @login_required(login_url="web:login")
+def pending_stock_api(request):
+    """Compteur des demandes de stock en attente (produits/entrées proposés par
+    les agents). Utilisé par la cloche de notification de la barre du haut pour
+    prévenir l'admin en temps réel, sans recharger la page.
+    """
+    r = _remote(request)
+    if r.get("role") not in ("super_admin", "admin"):
+        return JsonResponse({"count": 0})
+    count = StockEntryRequest.objects.filter(statut="en_attente").count()
+    return JsonResponse({"count": count})
+
+
+@login_required(login_url="web:login")
 @delete_required
 def transaction_delete(request, pk):
     """Suppression douce d'une transaction (dépôt/retrait) → corbeille."""

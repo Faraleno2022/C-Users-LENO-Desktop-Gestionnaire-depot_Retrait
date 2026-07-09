@@ -36,6 +36,7 @@ urlpatterns = [
     path("produits/<int:pk>/stock/", views.stock_adjust, name="stock_adjust"),
     path("produits/<int:pk>/demande-entree/", views.stock_entry_request, name="stock_entry_request"),
     path("stock/validations/", views.stock_validations, name="stock_validations"),
+    path("api/stock-a-valider/", views.pending_stock_api, name="pending_stock_api"),
     path("stock/validations/<int:pk>/valider/", views.stock_request_validate, name="stock_request_validate"),
     path("stock/validations/<int:pk>/rejeter/", views.stock_request_reject, name="stock_request_reject"),
     path("inventaire/", views.inventory, name="inventory"),

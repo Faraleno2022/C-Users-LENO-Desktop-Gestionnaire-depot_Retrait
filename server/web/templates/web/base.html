@@ -79,6 +79,13 @@
     .topbar-title { font-size: 1rem; font-weight: 600; color: #111827; }
     @keyframes emab-spin { to { transform: rotate(360deg); } }
     .spin { display: inline-block; animation: emab-spin .8s linear infinite; }
+    /* Cloche de notification « à valider » : pulsation quand il y a des demandes */
+    @keyframes emab-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(220,53,69,.6); }
+      70%  { box-shadow: 0 0 0 8px rgba(220,53,69,0); }
+      100% { box-shadow: 0 0 0 0 rgba(220,53,69,0); }
+    }
+    .notif-pulse { animation: emab-pulse 1.6s infinite; }
 
     /* ---------- Mode mobile / écran étroit ---------- */
     @media (max-width: 991.98px) {
@@ -226,6 +233,18 @@
         <i class="bi bi-arrow-repeat" id="syncNowIcon"></i>
         <span class="d-none d-sm-inline" id="syncNowText">Synchroniser</span>
       </button>
+      {% if request.session.remote_user.role == 'super_admin' or request.session.remote_user.role == 'admin' %}
+      <a href="{% url 'web:stock_validations' %}" id="notifBell"
+         class="btn btn-sm position-relative ms-2 {% if pending_stock_count %}btn-danger notif-pulse{% else %}btn-outline-secondary{% endif %}"
+         title="Produits / entrées proposés par les agents, à valider">
+        <i class="bi {% if pending_stock_count %}bi-bell-fill{% else %}bi-bell{% endif %}" id="notifBellIcon"></i>
+        <span class="d-none d-sm-inline">À valider</span>
+        <span id="notifBellCount"
+              class="badge rounded-pill bg-warning text-dark position-absolute top-0 start-100 translate-middle {% if not pending_stock_count %}d-none{% endif %}">
+          {{ pending_stock_count }}
+        </span>
+      </a>
+      {% endif %}
       {% if is_local_console %}
       <form method="post" action="{% url 'web:quit_app' %}" class="d-inline"
             onsubmit="return confirm('Fermer complètement l\'application ? La synchronisation s\'arrêtera jusqu\'au prochain démarrage.');">
@@ -307,6 +326,38 @@
         })
         .catch(function () { alert('Erreur réseau pendant la synchronisation.'); reset(); });
     });
+  })();
+
+  // Cloche « à valider » : met à jour le compteur en temps réel (admin) pour
+  // que l'admin soit prévenu dès qu'un agent propose un produit/une entrée,
+  // sans avoir à recharger la page.
+  (function () {
+    var bell = document.getElementById('notifBell');
+    if (!bell) return;  // non-admin : pas de cloche
+    var icon = document.getElementById('notifBellIcon');
+    var count = document.getElementById('notifBellCount');
+    var url = "{% url 'web:pending_stock_api' %}";
+    function apply(n) {
+      if (n > 0) {
+        count.textContent = n;
+        count.classList.remove('d-none');
+        bell.classList.add('btn-danger', 'notif-pulse');
+        bell.classList.remove('btn-outline-secondary');
+        icon.classList.add('bi-bell-fill'); icon.classList.remove('bi-bell');
+      } else {
+        count.classList.add('d-none');
+        bell.classList.remove('btn-danger', 'notif-pulse');
+        bell.classList.add('btn-outline-secondary');
+        icon.classList.remove('bi-bell-fill'); icon.classList.add('bi-bell');
+      }
+    }
+    function poll() {
+      fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { apply(d.count || 0); })
+        .catch(function () {});
+    }
+    setInterval(poll, 15000);
   })();
   {% endif %}
 </script>

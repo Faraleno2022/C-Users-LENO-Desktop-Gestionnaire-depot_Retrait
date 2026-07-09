@@ -10,6 +10,21 @@
   </span>
 </div>
 
+{# Alerte admin : produits/entrées proposés par les agents, à valider.
+   pending_stock_count vaut 0 pour les non-admins (cf. context processor). #}
+{% if pending_stock_count %}
+<a href="{% url 'web:stock_validations' %}" class="text-decoration-none">
+  <div class="alert alert-warning d-flex align-items-center shadow-sm" role="alert">
+    <i class="bi bi-bell-fill fs-4 me-3"></i>
+    <div class="me-auto">
+      <strong>{{ pending_stock_count }} demande(s) en attente de validation</strong>
+      <div class="small text-muted">Un ou plusieurs agents ont proposé des produits / entrées de stock. Cliquez pour vérifier et valider.</div>
+    </div>
+    <span class="btn btn-warning btn-sm ms-3">Valider maintenant</span>
+  </div>
+</a>
+{% endif %}
+
 <div class="row g-3 mb-4">
   <div class="col-12 col-sm-6 col-lg-4">
     <div class="card stat-card p-3 h-100">
