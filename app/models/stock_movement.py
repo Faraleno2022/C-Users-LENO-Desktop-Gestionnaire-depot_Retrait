@@ -4,6 +4,14 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+def _get(row, key, default=None):
+    try:
+        keys = row.keys()
+    except AttributeError:
+        keys = []
+    return row[key] if key in keys else default
+
+
 @dataclass
 class StockMovement:
     id: Optional[int]
@@ -18,6 +26,7 @@ class StockMovement:
     agent_id: int
     agent_nom: str
     created_at: str
+    deleted: bool = False
     sync_status: str = "pending"
     last_synced_at: Optional[str] = None
 
@@ -36,6 +45,7 @@ class StockMovement:
             agent_id=row["agent_id"],
             agent_nom=row["agent_nom"],
             created_at=row["created_at"],
+            deleted=bool(_get(row, "deleted", 0)),
             sync_status=row["sync_status"],
             last_synced_at=row["last_synced_at"],
         )

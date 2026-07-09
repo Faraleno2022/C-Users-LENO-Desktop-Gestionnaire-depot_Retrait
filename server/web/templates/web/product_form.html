@@ -42,15 +42,44 @@
       </div>
       <div class="row g-2">
         <div class="col-sm-6 mb-3">
+          <label class="form-label">Catégorie</label>
+          <input type="text" name="categorie" class="form-control"
+                 value="{{ product.categorie|default:'' }}">
+        </div>
+        <div class="col-sm-6 mb-3">
+          <label class="form-label">Unité</label>
+          <input type="text" name="unite" class="form-control"
+                 value="{{ product.unite|default:'' }}">
+        </div>
+      </div>
+      <div class="row g-2">
+        <div class="col-sm-6 mb-3">
+          <label class="form-label">Prix d'achat (GNF)</label>
+          <input type="number" step="1" min="0" name="prix_achat" class="form-control"
+                 value="{{ product.prix_achat|default:0|stringformat:'.0f' }}">
+        </div>
+        <div class="col-sm-6 mb-3">
           <label class="form-label">Prix unitaire (GNF) <span class="text-danger">*</span></label>
           <input type="number" step="1" min="0" name="prix_unitaire" class="form-control" required
                  value="{{ product.prix_unitaire|default:0|stringformat:'.0f' }}">
         </div>
+      </div>
+      <div class="row g-2">
         <div class="col-sm-6 mb-3">
           <label class="form-label">Seuil d'alerte stock</label>
           <input type="number" step="1" min="0" name="seuil_alerte" class="form-control"
                  value="{{ product.seuil_alerte|default:0|stringformat:'.0f' }}">
         </div>
+        <div class="col-sm-6 mb-3">
+          <label class="form-label">Stock maximum</label>
+          <input type="number" step="1" min="0" name="stock_max" class="form-control"
+                 value="{{ product.stock_max|default:0|stringformat:'.0f' }}">
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Emplacement</label>
+        <input type="text" name="emplacement" class="form-control"
+               value="{{ product.emplacement|default:'' }}">
       </div>
 
       {% if not product %}

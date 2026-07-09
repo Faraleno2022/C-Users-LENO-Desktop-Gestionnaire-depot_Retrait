@@ -914,10 +914,15 @@ def product_new(request):
                         " bien un produit différent."
                     )
             description = (request.POST.get("description") or "").strip()
+            categorie = (request.POST.get("categorie") or "").strip()
+            unite = (request.POST.get("unite") or "").strip()
+            prix_achat = float(request.POST.get("prix_achat") or 0)
             prix = float(request.POST.get("prix_unitaire") or 0)
             if prix < 0:
                 raise ValueError("Le prix doit être positif ou nul.")
             seuil = float(request.POST.get("seuil_alerte") or 0)
+            stock_max = float(request.POST.get("stock_max") or 0)
+            emplacement = (request.POST.get("emplacement") or "").strip()
             qte = float(request.POST.get("quantite_stock") or 0)
             now = _iso_now()
             p = Product.objects.create(
@@ -925,9 +930,14 @@ def product_new(request):
                 reference=reference,
                 nom=nom,
                 description=description,
+                categorie=categorie,
+                unite=unite,
+                prix_achat=prix_achat,
                 prix_unitaire=prix,
                 quantite_stock=qte,
                 seuil_alerte=seuil,
+                stock_max=stock_max,
+                emplacement=emplacement,
                 actif=True,
                 created_at=now,
                 updated_at=now,
@@ -980,12 +990,19 @@ def product_edit(request, pk):
             if prix < 0:
                 raise ValueError("Le prix doit être positif ou nul.")
             seuil = float(request.POST.get("seuil_alerte") or 0)
+            prix_achat = float(request.POST.get("prix_achat") or 0)
+            stock_max = float(request.POST.get("stock_max") or 0)
             actif = request.POST.get("actif") == "on"
             product.nom = nom
             product.reference = (request.POST.get("reference") or "").strip()
             product.description = (request.POST.get("description") or "").strip()
+            product.categorie = (request.POST.get("categorie") or "").strip()
+            product.unite = (request.POST.get("unite") or "").strip()
+            product.prix_achat = prix_achat
             product.prix_unitaire = prix
             product.seuil_alerte = seuil
+            product.stock_max = stock_max
+            product.emplacement = (request.POST.get("emplacement") or "").strip()
             product.actif = actif
             product.updated_at = _iso_now()
             product.save()
@@ -1518,15 +1535,108 @@ def sale_restore(request, pk):
 
 @login_required(login_url="web:login")
 @delete_required
+def stock_movement_restore(request, pk):
+    movement = get_object_or_404(StockMovement, pk=pk, deleted=True)
+    if request.method == "POST":
+        movement.deleted = False
+        movement.save()
+        _log_audit(
+            request, "stock_movement_restore",
+            target_type="stock_movement", target_id=movement.uuid,
+            details=f"{movement.product_nom} {movement.type} {movement.quantite:g}",
+        )
+        messages.success(request, f"Mouvement de stock « {movement.product_nom} » restauré.")
+    return redirect("web:trash")
+
+
+@login_required(login_url="web:login")
+@delete_required
+def product_restore(request, pk):
+    product = get_object_or_404(Product, pk=pk, actif=False)
+    if request.method == "POST":
+        product.actif = True
+        product.updated_at = _iso_now()
+        product.save()
+        _log_audit(
+            request, "product_restore", target_type="product",
+            target_id=product.uuid, details=product.nom,
+        )
+        messages.success(request, f"Produit « {product.nom} » restauré.")
+    return redirect("web:trash")
+
+
+@login_required(login_url="web:login")
+@delete_required
+def client_restore(request, pk):
+    client = get_object_or_404(Client, pk=pk, actif=False)
+    if request.method == "POST":
+        client.actif = True
+        client.updated_at = _iso_now()
+        client.save()
+        _log_audit(
+            request, "client_restore", target_type="client",
+            target_id=client.uuid, details=client.matricule,
+        )
+        messages.success(request, f"Fiche client « {client.matricule} » restaurée.")
+    return redirect("web:trash")
+
+
+@login_required(login_url="web:login")
+@delete_required
+def trash_all_active_data(request):
+    if request.method == "POST":
+        now = _iso_now()
+        received_at = timezone.now()
+        n_tx = Transaction.objects.filter(deleted=False).update(
+            deleted=True, received_at=received_at,
+        )
+        n_sales = Sale.objects.filter(deleted=False).update(
+            deleted=True, received_at=received_at,
+        )
+        n_moves = StockMovement.objects.filter(deleted=False).update(
+            deleted=True, received_at=received_at,
+        )
+        n_products = Product.objects.filter(actif=True).update(
+            actif=False, updated_at=now, received_at=received_at,
+        )
+        n_clients = Client.objects.filter(actif=True).update(
+            actif=False, updated_at=now, received_at=received_at,
+        )
+        _log_audit(
+            request, "trash_all_active_data", target_type="database",
+            target_id="active",
+            details=(
+                f"tx={n_tx}, sales={n_sales}, movements={n_moves}, "
+                f"products={n_products}, clients={n_clients}"
+            ),
+        )
+        messages.success(
+            request,
+            "Base active vidée : les données métier ont été envoyées à la corbeille.",
+        )
+    return redirect("web:trash")
+
+
+@login_required(login_url="web:login")
+@delete_required
 def trash(request):
     """Corbeille : transactions et ventes supprimées, restaurables."""
     deleted_tx = Transaction.objects.filter(deleted=True).order_by("-created_at", "-id")[:100]
     deleted_sales = Sale.objects.filter(deleted=True).order_by("-created_at", "-id")[:100]
+    deleted_moves = StockMovement.objects.filter(deleted=True).order_by("-created_at", "-id")[:100]
+    deleted_products = Product.objects.filter(actif=False).order_by("nom", "id")[:100]
+    deleted_clients = Client.objects.filter(actif=False).order_by("matricule", "id")[:100]
     return render(request, "web/trash.html", {
         "deleted_tx": deleted_tx,
         "deleted_sales": deleted_sales,
+        "deleted_moves": deleted_moves,
+        "deleted_products": deleted_products,
+        "deleted_clients": deleted_clients,
         "n_tx": Transaction.objects.filter(deleted=True).count(),
         "n_sales": Sale.objects.filter(deleted=True).count(),
+        "n_moves": StockMovement.objects.filter(deleted=True).count(),
+        "n_products": Product.objects.filter(actif=False).count(),
+        "n_clients": Client.objects.filter(actif=False).count(),
         "remote": _remote(request),
     })
 
@@ -1538,7 +1648,7 @@ def stock_movements(request):
     Trace toutes les variations de stock : réapprovisionnements, ventes,
     retraits de produits, ajustements d'inventaire, pertes/casses.
     """
-    qs = StockMovement.objects.all()
+    qs = StockMovement.objects.filter(deleted=False)
     product = (request.GET.get("product") or "").strip()
     type_ = (request.GET.get("type") or "").strip()
     date_from = (request.GET.get("date_from") or "").strip()

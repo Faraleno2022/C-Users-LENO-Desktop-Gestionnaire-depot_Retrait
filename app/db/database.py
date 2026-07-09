@@ -130,6 +130,31 @@ def _apply_post_migrations(conn) -> None:
         )
         conn.commit()
 
+    cur.execute("SELECT value FROM app_settings WHERE key = 'mig_product_extra_fields_resync_v1'")
+    row = cur.fetchone()
+    if row is None:
+        # Les champs enrichis sont maintenant inclus dans le protocole de sync :
+        # renvoyer les produits existants une fois pour les propager au serveur.
+        cur.execute("UPDATE products SET sync_status = 'pending' WHERE sync_status = 'synced'")
+        cur.execute(
+            "INSERT INTO app_settings(key, value) VALUES ('mig_product_extra_fields_resync_v1', '1')"
+        )
+        conn.commit()
+
+    cur.execute("SELECT value FROM app_settings WHERE key = 'mig_stock_movement_deleted_v1'")
+    row = cur.fetchone()
+    if row is None:
+        cols = [r["name"] for r in cur.execute("PRAGMA table_info(stock_movements)").fetchall()]
+        if "deleted" not in cols:
+            cur.execute("ALTER TABLE stock_movements ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+        cur.execute(
+            "UPDATE stock_movements SET sync_status = 'pending' WHERE sync_status = 'synced'"
+        )
+        cur.execute(
+            "INSERT INTO app_settings(key, value) VALUES ('mig_stock_movement_deleted_v1', '1')"
+        )
+        conn.commit()
+
     cur.execute("SELECT value FROM app_settings WHERE key = 'mig_audit_sync_v1'")
     row = cur.fetchone()
     if row is None:

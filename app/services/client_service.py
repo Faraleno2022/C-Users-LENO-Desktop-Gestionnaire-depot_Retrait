@@ -51,10 +51,13 @@ def get_client(client_id: int) -> Optional[Client]:
     return Client.from_row(row) if row else None
 
 
-def get_client_by_matricule(matricule: str) -> Optional[Client]:
+def get_client_by_matricule(matricule: str, include_inactive: bool = False) -> Optional[Client]:
     conn = get_connection()
+    sql = "SELECT * FROM clients WHERE matricule = ?"
+    if not include_inactive:
+        sql += " AND actif = 1"
     row = conn.execute(
-        "SELECT * FROM clients WHERE matricule = ?", ((matricule or "").strip(),)
+        sql, ((matricule or "").strip(),)
     ).fetchone()
     return Client.from_row(row) if row else None
 
@@ -70,6 +73,17 @@ def create_client(
         raise ClientError("Le matricule est obligatoire.")
     if get_client_by_matricule(matricule) is not None:
         raise ClientError(f"Une fiche existe déjà pour le matricule « {matricule} ».")
+
+    existing_inactive = get_client_by_matricule(matricule, include_inactive=True)
+    if existing_inactive is not None and not existing_inactive.actif:
+        return update_client(
+            existing_inactive.id,
+            matricule=matricule,
+            nom=nom,
+            telephone=telephone,
+            note=note,
+            actif=True,
+        )
 
     now = now_iso()
     with db_transaction() as conn:
@@ -112,7 +126,7 @@ def update_client(
         new_mat = matricule.strip()
         if not new_mat:
             raise ClientError("Le matricule ne peut pas être vide.")
-        existing = get_client_by_matricule(new_mat)
+        existing = get_client_by_matricule(new_mat, include_inactive=True)
         if existing is not None and existing.id != client_id:
             raise ClientError(f"Le matricule « {new_mat} » est déjà utilisé.")
         fields.append("matricule = ?")
@@ -161,13 +175,16 @@ def delete_client(client_id: int) -> None:
     if client is None:
         raise ClientError("Fiche client introuvable.")
     conn = get_connection()
-    conn.execute("DELETE FROM clients WHERE id = ?", (client_id,))
+    conn.execute(
+        "UPDATE clients SET actif = 0, updated_at = ?, sync_status = 'pending' WHERE id = ?",
+        (now_iso(), client_id),
+    )
     conn.commit()
     actor = auth_service.current_user()
     audit_service.log_action(
         actor.id if actor else None,
         actor.identifiant if actor else None,
-        "CLIENT_DELETE", target_type="client", target_id=str(client_id),
+        "CLIENT_DEACTIVATE", target_type="client", target_id=str(client_id),
         details=client.matricule,
     )
 
@@ -189,7 +206,7 @@ def list_clients(query: Optional[str] = None) -> List[ClientRow]:
     conn = get_connection()
     fiches = {
         c["matricule"]: c
-        for c in conn.execute("SELECT * FROM clients").fetchall()
+        for c in conn.execute("SELECT * FROM clients WHERE actif = 1").fetchall()
     }
     result: List[ClientRow] = []
     q = (query or "").strip().lower()

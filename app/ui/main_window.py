@@ -265,12 +265,7 @@ class MainWindow(QMainWindow):
                 f"Sync : envoyé {total_push} · reçu {total_pull_in}", 5000
             )
             # Rafraîchit la vue courante pour refléter les nouveautés.
-            current = self.stack.currentWidget()
-            if hasattr(current, "refresh"):
-                try:
-                    current.refresh()
-                except Exception:
-                    pass
+            self._refresh_views()
         else:
             self.statusBar().showMessage("Sync à jour", 2000)
         self.sync_widget.refresh()
@@ -288,13 +283,20 @@ class MainWindow(QMainWindow):
 
     def _on_data_changed(self) -> None:
         """Appelé quand les données changent — rafraîchit la vue active."""
-        current = self.stack.currentWidget()
-        if hasattr(current, "refresh"):
+        self._refresh_views()
+        self.sync_widget.refresh()
+
+    def _refresh_views(self) -> None:
+        """Rafraîchit toutes les vues capables de se recharger."""
+        seen = set()
+        for view in self.views.values():
+            if id(view) in seen or not hasattr(view, "refresh"):
+                continue
+            seen.add(id(view))
             try:
-                current.refresh()
+                view.refresh()
             except Exception:
                 pass
-        self.sync_widget.refresh()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

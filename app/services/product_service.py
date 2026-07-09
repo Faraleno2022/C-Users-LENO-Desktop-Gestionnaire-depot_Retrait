@@ -188,21 +188,18 @@ def delete_product(product_id: int) -> None:
     if product is None:
         raise ProductError("Produit introuvable.")
     conn = get_connection()
-    sales = conn.execute(
-        "SELECT COUNT(*) AS n FROM sales WHERE product_id = ? AND deleted = 0", (product_id,)
-    ).fetchone()["n"]
-    if sales > 0:
-        raise ProductError(
-            "Ce produit a des ventes associées. Désactivez-le plutôt que de le supprimer."
-        )
-    conn.execute("DELETE FROM stock_movements WHERE product_id = ?", (product_id,))
-    conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
+    if not product.actif:
+        return
+    conn.execute(
+        "UPDATE products SET actif = 0, updated_at = ?, sync_status = 'pending' WHERE id = ?",
+        (now_iso(), product_id),
+    )
     conn.commit()
     actor = auth_service.current_user()
     audit_service.log_action(
         actor.id if actor else None,
         actor.identifiant if actor else None,
-        "PRODUCT_DELETE",
+        "PRODUCT_DEACTIVATE",
         target_type="product",
         target_id=str(product_id),
         details=product.nom,
@@ -221,8 +218,8 @@ def _record_movement(conn, product_id, product_nom, type_, quantite, stock_apres
     cur = conn.execute(
         """INSERT INTO stock_movements
            (uuid, product_id, product_uuid, product_nom, type, quantite, stock_apres,
-            motif, sale_id, agent_id, agent_uuid, agent_nom, created_at, sync_status)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')""",
+            motif, sale_id, agent_id, agent_uuid, agent_nom, created_at, sync_status, deleted)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',0)""",
         (
             new_uuid(), product_id, product_uuid, product_nom, type_,
             float(quantite), float(stock_apres),
@@ -290,12 +287,12 @@ def list_movements(product_id: Optional[int] = None, limit: int = 200) -> List[S
     conn = get_connection()
     if product_id is not None:
         rows = conn.execute(
-            "SELECT * FROM stock_movements WHERE product_id = ? ORDER BY id DESC LIMIT ?",
+            "SELECT * FROM stock_movements WHERE deleted = 0 AND product_id = ? ORDER BY id DESC LIMIT ?",
             (product_id, limit),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM stock_movements ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM stock_movements WHERE deleted = 0 ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
     return [StockMovement.from_row(r) for r in rows]
 

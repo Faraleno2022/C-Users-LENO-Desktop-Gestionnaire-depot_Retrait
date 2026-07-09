@@ -81,6 +81,11 @@ class Product(SyncedModel):
     prix_unitaire = models.FloatField(default=0)
     quantite_stock = models.FloatField(default=0)
     seuil_alerte = models.FloatField(default=0)
+    categorie = models.CharField(max_length=120, blank=True, default="")
+    unite = models.CharField(max_length=40, blank=True, default="")
+    prix_achat = models.FloatField(default=0)
+    stock_max = models.FloatField(default=0)
+    emplacement = models.CharField(max_length=120, blank=True, default="")
     actif = models.BooleanField(default=True)
     created_at = models.CharField(max_length=32)
     updated_at = models.CharField(max_length=32)
@@ -105,6 +110,7 @@ class StockMovement(SyncedModel):
     agent_uuid = models.CharField(max_length=36, blank=True, default="")
     agent_nom = models.CharField(max_length=200, blank=True, default="")
     created_at = models.CharField(max_length=32)
+    deleted = models.BooleanField(default=False)
 
     class Meta:
         verbose_name = "Mouvement de stock"
@@ -272,12 +278,13 @@ TABLE_MODELS = {
     ]),
     "products": (Product, [
         "reference", "nom", "description", "prix_unitaire", "quantite_stock",
-        "seuil_alerte", "actif", "created_at", "updated_at",
+        "seuil_alerte", "categorie", "unite", "prix_achat", "stock_max",
+        "emplacement", "actif", "created_at", "updated_at",
     ]),
     "stock_movements": (StockMovement, [
         "product_id", "product_uuid", "product_nom", "type", "quantite",
         "stock_apres", "motif", "sale_id", "agent_id", "agent_uuid",
-        "agent_nom", "created_at",
+        "agent_nom", "created_at", "deleted",
     ]),
     "transactions": (Transaction, [
         "matricule", "telephone", "type", "montant", "solde_apres", "agent_id",

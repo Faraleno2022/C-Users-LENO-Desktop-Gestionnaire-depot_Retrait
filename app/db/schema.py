@@ -123,6 +123,7 @@ SCHEMA_STATEMENTS = [
         created_at TEXT NOT NULL,
         sync_status TEXT NOT NULL DEFAULT 'pending',
         last_synced_at TEXT,
+        deleted INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (product_id) REFERENCES products(id),
         FOREIGN KEY (agent_id) REFERENCES users(id)
     );

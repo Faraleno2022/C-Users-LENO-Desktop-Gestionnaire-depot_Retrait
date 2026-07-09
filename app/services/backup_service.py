@@ -143,8 +143,18 @@ def run_auto_backup_if_due() -> Optional[Path]:
 def wipe_data() -> None:
     """Réinitialisation : vide transactions et audit_logs (conserve utilisateurs)."""
     conn = get_connection()
-    conn.execute("DELETE FROM transactions;")
-    conn.execute("DELETE FROM audit_logs;")
+    ts = now_iso()
+    conn.execute("UPDATE transactions SET deleted = 1, sync_status = 'pending' WHERE deleted = 0;")
+    conn.execute("UPDATE sales SET deleted = 1, sync_status = 'pending' WHERE deleted = 0;")
+    conn.execute("UPDATE stock_movements SET deleted = 1, sync_status = 'pending' WHERE deleted = 0;")
+    conn.execute(
+        "UPDATE products SET actif = 0, updated_at = ?, sync_status = 'pending' WHERE actif = 1;",
+        (ts,),
+    )
+    conn.execute(
+        "UPDATE clients SET actif = 0, updated_at = ?, sync_status = 'pending' WHERE actif = 1;",
+        (ts,),
+    )
     conn.commit()
     actor = auth_service.current_user()
     audit_service.log_action(
