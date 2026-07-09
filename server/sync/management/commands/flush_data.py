@@ -34,6 +34,7 @@ from sync.models import (
     Product,
     RemoteUser,
     Sale,
+    StockEntryRequest,
     StockMovement,
     Transaction,
 )
@@ -72,6 +73,7 @@ class Command(BaseCommand):
             ("Ventes", Sale),
             ("Transactions (dépôts/retraits)", Transaction),
             ("Mouvements de stock", StockMovement),
+            ("Demandes de validation stock", StockEntryRequest),
             ("Journal d'audit", AuditLog),
         ]
         if not opts["keep_products"]:
