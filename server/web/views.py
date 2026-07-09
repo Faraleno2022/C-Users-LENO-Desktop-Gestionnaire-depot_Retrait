@@ -1154,7 +1154,9 @@ def stock_entry_request(request, pk):
             agent = _current_remote_user(request)
             r = _remote(request)
             StockEntryRequest.objects.create(
-                product=product,
+                uuid=str(uuid_mod.uuid4()),
+                kind="entree",
+                product_uuid=product.uuid,
                 product_nom=product.nom,
                 quantite=quantite,
                 motif=motif,
@@ -1162,6 +1164,7 @@ def stock_entry_request(request, pk):
                 requested_by_identifiant=r.get("identifiant") or "",
                 requested_by_nom=(agent.nom_complet if agent else r.get("nom_complet") or ""),
                 requested_by_uuid=(agent.uuid if agent else ""),
+                created_at=_iso_now(),
             )
             _log_audit(
                 request, "stock_entry_request", target_type="product",
@@ -1222,8 +1225,9 @@ def product_request_new(request):
             agent = _current_remote_user(request)
             r = _remote(request)
             StockEntryRequest.objects.create(
+                uuid=str(uuid_mod.uuid4()),
                 kind="nouveau_produit",
-                product=None,
+                product_uuid="",
                 product_nom=nom,
                 quantite=qte,
                 new_reference=reference,
@@ -1235,6 +1239,7 @@ def product_request_new(request):
                 requested_by_identifiant=r.get("identifiant") or "",
                 requested_by_nom=(agent.nom_complet if agent else r.get("nom_complet") or ""),
                 requested_by_uuid=(agent.uuid if agent else ""),
+                created_at=_iso_now(),
             )
             _log_audit(
                 request, "product_request_new", target_type="product", target_id="",
@@ -1259,7 +1264,7 @@ def product_request_new(request):
 def stock_validations(request):
     """Liste des demandes d'entrée de stock à valider (admin)."""
     statut = (request.GET.get("statut") or "en_attente").strip()
-    qs = StockEntryRequest.objects.select_related("product")
+    qs = StockEntryRequest.objects.all()
     if statut in ("en_attente", "valide", "rejete"):
         qs = qs.filter(statut=statut)
     page_obj = _paginate(request, qs)
@@ -1305,7 +1310,7 @@ def stock_request_validate(request, pk):
             updated_at=now,
         )
     else:
-        product = req.product
+        product = Product.objects.filter(uuid=req.product_uuid).first()
         if product is None:
             messages.warning(request, "Produit introuvable pour cette demande.")
             return redirect("web:stock_validations")
@@ -1340,10 +1345,10 @@ def stock_request_validate(request, pk):
 
     r = _remote(request)
     req.statut = "valide"
-    req.product = product  # rattache le produit créé (cas nouveau produit)
+    req.product_uuid = product.uuid  # rattache le produit (cas nouveau produit)
     req.validated_by_identifiant = r.get("identifiant") or ""
     req.validated_by_nom = r.get("nom_complet") or ""
-    req.validated_at = timezone.now()
+    req.validated_at = now
     req.resulting_movement_uuid = mv_uuid
     req.save()
 
@@ -1389,14 +1394,14 @@ def stock_request_reject(request, pk):
     req.decision_motif = (request.POST.get("motif") or "").strip()
     req.validated_by_identifiant = r.get("identifiant") or ""
     req.validated_by_nom = r.get("nom_complet") or ""
-    req.validated_at = timezone.now()
+    req.validated_at = _iso_now()
     req.save()
 
     est_nouveau = req.kind == "nouveau_produit"
     _log_audit(
         request, "product_request_reject" if est_nouveau else "stock_entry_reject",
         target_type="product",
-        target_id=(req.product.uuid if req.product else ""),
+        target_id=req.product_uuid,
         details=(f"Nouveau produit refusé : {req.product_nom}" if est_nouveau
                  else f"{req.product_nom} : entrée refusée {req.quantite:g}")
         + (f" — {req.decision_motif}" if req.decision_motif else ""),

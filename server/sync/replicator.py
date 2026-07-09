@@ -29,7 +29,7 @@ from sync.models import TABLE_MODELS
 # Ordre de réplication : les tables référencées (users, products) d'abord.
 TABLE_ORDER = [
     "users", "products", "clients", "stock_movements",
-    "transactions", "sales", "audit_logs",
+    "transactions", "sales", "audit_logs", "stock_entry_requests",
 ]
 
 BATCH = 200

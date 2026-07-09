@@ -203,16 +203,21 @@ class Client(SyncedModel):
         return f"{self.matricule} ({self.nom})" if self.nom else self.matricule
 
 
-class StockEntryRequest(models.Model):
-    """Demande d'entrée de stock saisie par un agent, à valider par un admin.
+class StockEntryRequest(SyncedModel):
+    """Demande d'entrée de stock / de création de produit saisie par un agent,
+    à valider par un admin.
 
-    Modèle SERVEUR-UNIQUEMENT (console web) : il n'est PAS dans TABLE_MODELS,
-    donc jamais synchronisé vers les postes. Tant qu'une demande est « en
-    attente », elle n'affecte pas le stock réel — elle n'est donc pas utilisable.
+    SYNCHRONISÉ (comme les autres tables) : la demande se réplique vers le
+    serveur en ligne et les autres postes, afin qu'un administrateur — sur
+    n'importe quelle machine ou sur le site en ligne — voie la demande de
+    l'agent et puisse la valider. On n'utilise donc PAS de clé étrangère (les
+    identifiants diffèrent d'une base à l'autre) mais `product_uuid`, et les
+    dates sont stockées en texte ISO (sérialisables pour la sync).
 
-    À la validation par un admin, un StockMovement (entrée) est créé et le stock
-    du produit est incrémenté ; ces deux-là, eux, se répliquent normalement vers
-    les postes. Une demande rejetée ne modifie jamais le stock.
+    Tant que `statut = en_attente`, la demande n'affecte pas le stock réel. À la
+    validation, un StockMovement (et, pour un nouveau produit, un Product) est
+    créé ; ceux-là se répliquent normalement. Une demande rejetée ne modifie
+    jamais le stock.
     """
 
     STATUT_CHOICES = [
@@ -227,14 +232,13 @@ class StockEntryRequest(models.Model):
     ]
 
     # Type de demande : entrée sur un produit existant, ou création d'un
-    # nouveau produit (dans ce cas `product` est vide tant que non validé).
+    # nouveau produit (dans ce cas product_uuid est vide tant que non validé).
     kind = models.CharField(
         max_length=16, choices=KIND_CHOICES, default="entree", db_index=True
     )
-    product = models.ForeignKey(
-        Product, on_delete=models.CASCADE, related_name="entry_requests",
-        null=True, blank=True,
-    )
+    # Produit concerné (entrée) référencé par son uuid — pas de FK, pour rester
+    # synchronisable entre bases dont les identifiants numériques diffèrent.
+    product_uuid = models.CharField(max_length=36, blank=True, default="", db_index=True)
     # Instantané du nom au moment de la demande (robustesse d'affichage).
     product_nom = models.CharField(max_length=200)
     quantite = models.FloatField()
@@ -252,11 +256,11 @@ class StockEntryRequest(models.Model):
     requested_by_identifiant = models.CharField(max_length=120, blank=True, default="")
     requested_by_nom = models.CharField(max_length=200, blank=True, default="")
     requested_by_uuid = models.CharField(max_length=36, blank=True, default="")
-    created_at = models.DateTimeField(default=timezone.now)
+    created_at = models.CharField(max_length=32)
     # Décision admin
     validated_by_identifiant = models.CharField(max_length=120, blank=True, default="")
     validated_by_nom = models.CharField(max_length=200, blank=True, default="")
-    validated_at = models.DateTimeField(null=True, blank=True)
+    validated_at = models.CharField(max_length=32, blank=True, default="")
     decision_motif = models.CharField(max_length=255, blank=True, default="")
     # uuid du StockMovement créé à la validation (traçabilité).
     resulting_movement_uuid = models.CharField(max_length=36, blank=True, default="")
@@ -301,5 +305,12 @@ TABLE_MODELS = {
     "audit_logs": (AuditLog, [
         "user_id", "user_uuid", "user_identifiant", "action", "target_type",
         "target_id", "details", "created_at",
+    ]),
+    "stock_entry_requests": (StockEntryRequest, [
+        "kind", "product_uuid", "product_nom", "quantite", "motif",
+        "new_reference", "new_prix_unitaire", "new_seuil_alerte", "new_description",
+        "statut", "requested_by_identifiant", "requested_by_nom", "requested_by_uuid",
+        "created_at", "validated_by_identifiant", "validated_by_nom", "validated_at",
+        "decision_motif", "resulting_movement_uuid",
     ]),
 }
