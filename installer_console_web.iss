@@ -23,11 +23,11 @@ OutputBaseFilename=EMAB-Console-Web-Setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-; Ferme automatiquement la console si elle tourne encore, sinon l'exe est
-; verrouille et le remplacement echoue (« DeleteFile a echoue ; code 5 »).
-CloseApplications=yes
-CloseApplicationsFilter=*.exe
-RestartApplications=no
+; On n'utilise PAS le gestionnaire de redemarrage Windows (il n'arrive pas a
+; fermer la console en mode fenetre -> message « impossible d'arreter les
+; applications »). A la place, la section [Code] termine le processus de force
+; (taskkill) avant l'installation : voir PrepareToInstall plus bas.
+CloseApplications=no
 
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
@@ -59,3 +59,29 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 Type: filesandordirs; Name: "{app}"
 ; Retire le lanceur de démarrage automatique.
 Type: files; Name: "{userstartup}\EMAB-Console-Web-demarrage.vbs"
+
+[Code]
+// Ferme de force la console AVANT que l'installateur ne touche aux fichiers.
+// La console tourne en mode fenetre (sans fenetre repondant a WM_CLOSE) : le
+// gestionnaire de redemarrage Windows n'arrive donc pas a l'arreter « proprement »
+// (message « impossible d'arreter les applications »), et l'exe verrouille fait
+// echouer le remplacement (« DeleteFile a echoue ; code 5 »). On termine donc le
+// processus nous-memes ; taskkill ignore sans erreur l'absence de processus.
+procedure KillConsole;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/IM {#MyAppExeName} /F /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1500);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  KillConsole();
+  Result := '';
+end;
+
+procedure InitializeUninstallProgressForm;
+begin
+  KillConsole();
+end;
