@@ -4,7 +4,7 @@
 
 #define MyAppName "EMAB Gestionnaire"
 #define MyAppPublisher "EMAB GROUP"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppExeName "EMAB-Gestionnaire.exe"
 
 [Setup]
@@ -51,3 +51,25 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 ; Ne supprime PAS les données (%LOCALAPPDATA%\EMAB GROUP\Gestionnaire) :
 ; la base, les sauvegardes et exports survivent à une réinstallation.
 Type: filesandordirs; Name: "{app}"
+
+[Code]
+// Ferme de force l'app AVANT de remplacer les fichiers : sinon l'exe
+// verrouille fait echouer l'installation silencieuse (MAJ automatique).
+procedure KillApp;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/IM {#MyAppExeName} /F /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1500);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  KillApp();
+  Result := '';
+end;
+
+procedure InitializeUninstallProgressForm;
+begin
+  KillApp();
+end;
