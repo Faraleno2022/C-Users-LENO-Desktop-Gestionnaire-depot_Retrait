@@ -10,8 +10,7 @@
   </span>
 </div>
 
-{# Alerte admin : produits/entrées proposés par les agents, à valider.
-   pending_stock_count vaut 0 pour les non-admins (cf. context processor). #}
+{# Alerte admin : demandes agents a valider (pending_stock_count = 0 pour les non-admins). #}
 {% if pending_stock_count %}
 <a href="{% url 'web:stock_validations' %}" class="text-decoration-none">
   <div class="alert alert-warning d-flex align-items-center shadow-sm" role="alert">
