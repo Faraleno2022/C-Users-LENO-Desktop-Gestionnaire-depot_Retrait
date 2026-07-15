@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.22"
+APP_VERSION = "1.0.23"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -100,6 +100,7 @@ def _replication_loop(data_dir: Path) -> None:
     Relit la config à chaque cycle : on peut activer/modifier render_sync.json
     sans redémarrer la console. Les échecs réseau sont silencieux (hors-ligne).
     """
+    from sync.livesync import wait_for_sync
     from sync.replicator import ReplicationError, Replicator
 
     state_path = data_dir / "render_sync_state.json"
@@ -135,7 +136,10 @@ def _replication_loop(data_dir: Path) -> None:
                 print(f"[Sync Render] Erreur : {e}")
             except Exception as e:  # réseau coupé, serveur endormi… on réessaiera
                 print(f"[Sync Render] Hors-ligne ou serveur indisponible ({type(e).__name__})")
-        time.sleep(interval)
+        # Attend l'intervalle, MAIS se réveille aussitôt si une vue a demandé une
+        # synchro immédiate (création d'un client, d'une opération…) : les
+        # changements partent alors en ligne sans attendre le prochain cycle.
+        wait_for_sync(interval)
 
 
 def _find_chrome() -> str:

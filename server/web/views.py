@@ -135,6 +135,14 @@ def _log_audit(request, action: str, target_type: str = "", target_id: str = "",
         details=details or "",
         created_at=_iso_now(),
     )
+    # Réveille la boucle de réplication de la console locale : le changement
+    # (client, opération…) part TOUT DE SUITE vers le serveur en ligne, sans
+    # attendre le prochain cycle. No-op sur le serveur en ligne (Render).
+    try:
+        from sync.livesync import request_sync
+        request_sync()
+    except Exception:
+        pass
 
 
 def _remote(request):
