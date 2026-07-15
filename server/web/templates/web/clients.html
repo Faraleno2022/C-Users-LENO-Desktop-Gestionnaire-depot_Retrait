@@ -5,9 +5,9 @@
 {% block content %}
 <div class="d-flex flex-wrap align-items-center mb-3">
   <h1 class="h3 me-auto mb-2">Clients</h1>
-  {% if can_edit %}
+  {% if can_create %}
     <a href="{% url 'web:client_new' %}" class="btn btn-success">
-      <i class="bi bi-plus-lg"></i> Nouvelle fiche
+      <i class="bi bi-plus-lg"></i> Nouveau client
     </a>
   {% endif %}
 </div>

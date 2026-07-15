@@ -105,6 +105,20 @@ def _iso_now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _limit(value: str, max_len: int, label: str) -> str:
+    """Refuse une saisie plus longue que la colonne en base.
+
+    SQLite (console locale) accepte les dépassements mais PostgreSQL (site en
+    ligne) répond par une erreur 500 : on renvoie plutôt un message clair.
+    """
+    if len(value) > max_len:
+        raise ValueError(
+            f"{label} : {max_len} caractères maximum "
+            f"(saisie actuelle : {len(value)})."
+        )
+    return value
+
+
 def _log_audit(request, action: str, target_type: str = "", target_id: str = "", details: str = "") -> None:
     """Crée une entrée d'audit web. Sera synchronisée au poste au prochain pull."""
     r = request.session.get("remote_user") or {}
@@ -897,10 +911,10 @@ def product_new(request):
     error = None
     if request.method == "POST":
         try:
-            nom = (request.POST.get("nom") or "").strip()
+            nom = _limit((request.POST.get("nom") or "").strip(), 200, "Nom du produit")
             if not nom:
                 raise ValueError("Le nom est obligatoire.")
-            reference = (request.POST.get("reference") or "").strip()
+            reference = _limit((request.POST.get("reference") or "").strip(), 80, "Référence")
             # Anti-doublon : refuse un nom déjà utilisé (insensible à la casse et
             # aux espaces) ou une référence déjà prise, sauf si on force.
             force = request.POST.get("force_create") == "1"
@@ -914,15 +928,15 @@ def product_new(request):
                         " bien un produit différent."
                     )
             description = (request.POST.get("description") or "").strip()
-            categorie = (request.POST.get("categorie") or "").strip()
-            unite = (request.POST.get("unite") or "").strip()
+            categorie = _limit((request.POST.get("categorie") or "").strip(), 120, "Catégorie")
+            unite = _limit((request.POST.get("unite") or "").strip(), 40, "Unité")
             prix_achat = float(request.POST.get("prix_achat") or 0)
             prix = float(request.POST.get("prix_unitaire") or 0)
             if prix < 0:
                 raise ValueError("Le prix doit être positif ou nul.")
             seuil = float(request.POST.get("seuil_alerte") or 0)
             stock_max = float(request.POST.get("stock_max") or 0)
-            emplacement = (request.POST.get("emplacement") or "").strip()
+            emplacement = _limit((request.POST.get("emplacement") or "").strip(), 120, "Emplacement")
             qte = float(request.POST.get("quantite_stock") or 0)
             now = _iso_now()
             p = Product.objects.create(
@@ -993,16 +1007,16 @@ def product_edit(request, pk):
             prix_achat = float(request.POST.get("prix_achat") or 0)
             stock_max = float(request.POST.get("stock_max") or 0)
             actif = request.POST.get("actif") == "on"
-            product.nom = nom
-            product.reference = (request.POST.get("reference") or "").strip()
+            product.nom = _limit(nom, 200, "Nom du produit")
+            product.reference = _limit((request.POST.get("reference") or "").strip(), 80, "Référence")
             product.description = (request.POST.get("description") or "").strip()
-            product.categorie = (request.POST.get("categorie") or "").strip()
-            product.unite = (request.POST.get("unite") or "").strip()
+            product.categorie = _limit((request.POST.get("categorie") or "").strip(), 120, "Catégorie")
+            product.unite = _limit((request.POST.get("unite") or "").strip(), 40, "Unité")
             product.prix_achat = prix_achat
             product.prix_unitaire = prix
             product.seuil_alerte = seuil
             product.stock_max = stock_max
-            product.emplacement = (request.POST.get("emplacement") or "").strip()
+            product.emplacement = _limit((request.POST.get("emplacement") or "").strip(), 120, "Emplacement")
             product.actif = actif
             product.updated_at = _iso_now()
             product.save()
@@ -1039,7 +1053,7 @@ def stock_adjust(request, pk):
             quantite = float(qte_raw)
             if quantite <= 0:
                 raise ValueError("La quantité doit être strictement positive.")
-            motif = (request.POST.get("motif") or "").strip()
+            motif = _limit((request.POST.get("motif") or "").strip(), 255, "Motif")
 
             current_stock = float(product.quantite_stock or 0)
             if type_ == "entree":
@@ -1150,7 +1164,7 @@ def stock_entry_request(request, pk):
             quantite = float(qte_raw)
             if quantite <= 0:
                 raise ValueError("La quantité doit être strictement positive.")
-            motif = (request.POST.get("motif") or "").strip()
+            motif = _limit((request.POST.get("motif") or "").strip(), 255, "Motif")
             agent = _current_remote_user(request)
             r = _remote(request)
             StockEntryRequest.objects.create(
@@ -1199,10 +1213,10 @@ def product_request_new(request):
     error = None
     if request.method == "POST":
         try:
-            nom = (request.POST.get("nom") or "").strip()
+            nom = _limit((request.POST.get("nom") or "").strip(), 200, "Nom du produit")
             if not nom:
                 raise ValueError("Le nom du produit est obligatoire.")
-            reference = (request.POST.get("reference") or "").strip()
+            reference = _limit((request.POST.get("reference") or "").strip(), 80, "Référence")
             prix = float(request.POST.get("prix_unitaire") or 0)
             if prix < 0:
                 raise ValueError("Le prix doit être positif ou nul.")
@@ -1211,7 +1225,7 @@ def product_request_new(request):
             if qte < 0:
                 raise ValueError("La quantité initiale doit être positive ou nulle.")
             description = (request.POST.get("description") or "").strip()
-            motif = (request.POST.get("motif") or "").strip()
+            motif = _limit((request.POST.get("motif") or "").strip(), 255, "Motif")
             # Anti-doublon : si un produit du même nom existe déjà, orienter vers
             # une simple demande d'entrée (sauf si l'agent force).
             if request.POST.get("force_create") != "1":
@@ -1844,6 +1858,8 @@ def clients(request):
         "search": search,
         "remote": r,
         "can_edit": can_edit,
+        # Creation ouverte a tous les utilisateurs connectes (agents inclus).
+        "can_create": True,
     })
 
 
@@ -1876,8 +1892,10 @@ def _client_form_post(request, client=None):
 
 
 @login_required(login_url="web:login")
-@role_required("super_admin", "admin")
 def client_new(request):
+    # Ouvert a tous les roles : un agent peut enregistrer un nouveau client
+    # (matricule) directement, pour ne pas bloquer une operation. La
+    # modification/desactivation d'une fiche reste reservee aux admins.
     error = None
     if request.method == "POST":
         try:
