@@ -264,6 +264,23 @@
   <main class="container py-4">
 {% endif %}
 
+    {% if user.is_authenticated and update_ready %}
+    <div class="alert alert-primary d-flex align-items-center shadow-sm mb-3" role="alert">
+      <i class="bi bi-arrow-up-circle-fill fs-4 me-3"></i>
+      <div class="me-auto">
+        <strong>Mise à jour prête{% if update_version %} (version {{ update_version }}){% endif %}</strong>
+        <div class="small">Une nouvelle version est téléchargée. Cliquez pour l'installer maintenant — la console redémarre en ~30 s, vos données sont conservées.</div>
+      </div>
+      <form method="post" action="{% url 'web:apply_update' %}" class="ms-3"
+            onsubmit="return confirm('Installer la mise à jour maintenant ? La console va redémarrer (~30 s).');">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-primary btn-sm text-nowrap">
+          <i class="bi bi-download"></i> Appliquer maintenant
+        </button>
+      </form>
+    </div>
+    {% endif %}
+
     {% block content %}{% endblock %}
 
 {% if user.is_authenticated %}

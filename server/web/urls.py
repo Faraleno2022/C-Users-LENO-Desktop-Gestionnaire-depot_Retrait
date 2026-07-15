@@ -53,4 +53,5 @@ urlpatterns = [
     path("journal/", views.audit_journal, name="journal"),
     path("rapports/", views.reports_view, name="reports"),
     path("quitter/", views.quit_app, name="quit_app"),
+    path("appliquer-maj/", views.apply_update, name="apply_update"),
 ]

@@ -2328,3 +2328,30 @@ def quit_app(request):
     import threading
     threading.Timer(0.6, lambda: os._exit(0)).start()
     return render(request, "web/quit.html", {"confirm": False})
+
+
+@login_required(login_url="web:login")
+def apply_update(request):
+    """Applique MAINTENANT une mise à jour déjà téléchargée (console locale).
+
+    Lance le script qui ferme la console, installe la nouvelle version en
+    silencieux (données conservées) et relance. Réservé à la console locale.
+    """
+    import os
+    import sys
+    from pathlib import Path
+
+    if os.environ.get("EMAB_LOCAL_CONSOLE") != "1":
+        return HttpResponseForbidden("Indisponible sur le serveur en ligne.")
+    data_dir = os.environ.get("EMAB_DATA_DIR")
+    if request.method != "POST" or not data_dir:
+        return redirect("web:dashboard")
+    try:
+        from updater import apply_pending_update
+        launched = apply_pending_update(Path(data_dir), sys.executable)
+    except Exception:
+        launched = False
+    if not launched:
+        messages.info(request, "Aucune mise à jour prête à installer.")
+        return redirect("web:dashboard")
+    return render(request, "web/applying_update.html", {})

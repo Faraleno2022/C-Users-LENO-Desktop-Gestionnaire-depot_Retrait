@@ -85,6 +85,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "web.context_processors.local_console",
                 "web.context_processors.pending_stock",
+                "web.context_processors.pending_update",
             ],
         },
     },
