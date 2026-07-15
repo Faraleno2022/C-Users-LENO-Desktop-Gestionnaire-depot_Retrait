@@ -285,6 +285,16 @@ class MainWindow(QMainWindow):
         """Appelé quand les données changent — rafraîchit la vue active."""
         self._refresh_views()
         self.sync_widget.refresh()
+        # Envoi IMMÉDIAT vers le serveur en ligne : un client (ou une opération)
+        # créé apparaît tout de suite côté web, sans attendre le prochain tick
+        # de la synchro périodique. Sans effet si la sync n'est pas configurée
+        # ou si un envoi est déjà en cours (la ligne 'pending' partira alors).
+        ctrl = getattr(self, "auto_sync", None)
+        if ctrl is not None:
+            try:
+                ctrl.trigger_now()
+            except Exception:
+                pass
 
     def _refresh_views(self) -> None:
         """Rafraîchit toutes les vues capables de se recharger."""
