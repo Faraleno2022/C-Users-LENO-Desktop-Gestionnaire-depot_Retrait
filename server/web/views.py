@@ -2005,6 +2005,9 @@ def reports_view(request):
                 date_from, date_to = web_reports.month_period()
             elif kind == "annual":
                 date_from, date_to = web_reports.year_period()
+            elif kind == "all":
+                # Tout l'historique : période très large (aucune donnée exclue).
+                date_from, date_to = "2000-01-01", "2100-12-31"
 
             filename, mime, content = web_reports.generate(
                 dataset=dataset, kind=kind,

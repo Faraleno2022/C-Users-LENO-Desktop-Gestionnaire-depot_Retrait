@@ -17,7 +17,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from sync.models import Product, Sale, Transaction
+from sync.models import Product, Sale, StockMovement, Transaction
 
 
 # --- Périodes ----------------------------------------------------------------
@@ -75,6 +75,35 @@ STOCK_HEADERS = [
     "ID", "Référence", "Produit", "Prix unitaire", "Stock",
     "Seuil", "Valeur", "Statut",
 ]
+
+STOCK_MOVEMENTS_HEADERS = [
+    "Date", "Produit", "Type", "Quantité", "Stock après", "Motif", "Agent",
+]
+
+
+def fetch_stock_movements(date_from: str, date_to: str, agent: Optional[str] = None) -> List[Sequence]:
+    """Mouvements de stock (entrées/sorties) sur une période — utilisable par
+    mois ou par année via les périodes du formulaire de rapport."""
+    qs = StockMovement.objects.filter(
+        deleted=False,
+        created_at__gte=f"{date_from} 00:00:00",
+        created_at__lte=f"{date_to} 23:59:59",
+    )
+    if agent:
+        qs = qs.filter(agent_nom__icontains=agent)
+    qs = qs.order_by("created_at", "id")
+    rows = []
+    for m in qs:
+        rows.append([
+            m.created_at,
+            m.product_nom,
+            "Entrée" if m.type == "entree" else "Sortie",
+            _fmt_num(m.quantite),
+            _fmt_num(m.stock_apres),
+            m.motif or "",
+            m.agent_nom or "",
+        ])
+    return rows
 
 
 def fetch_transactions(date_from: str, date_to: str, agent: Optional[str] = None) -> List[Sequence]:
@@ -152,10 +181,25 @@ def fetch_stock() -> List[Sequence]:
 
 # --- Génération de fichier en mémoire ----------------------------------------
 
+def _safe_sheet_title(title: str) -> str:
+    """Nom d'onglet Excel valide : Excel interdit / \\ ? * [ ] : et limite à 31 car.
+
+    Sans ce nettoyage, un titre comme « Dépôts / Retraits » fait planter l'export
+    (ValueError: Invalid character / found in sheet title).
+    """
+    cleaned = title or "Export"
+    for ch in "/\\?*[]:":
+        cleaned = cleaned.replace(ch, "-")
+    cleaned = cleaned.strip() or "Export"
+    return cleaned[:31]
+
+
 def build_excel(title: str, headers: Sequence[str], rows: Sequence[Sequence]) -> bytes:
     wb = Workbook()
     ws = wb.active
-    ws.title = (title[:30] or "Export")
+    # Le nom d'onglet est nettoyé ; la cellule A1 garde le titre complet (les
+    # cellules acceptent tous les caractères, contrairement aux noms d'onglets).
+    ws.title = _safe_sheet_title(title)
     ws.append([title])
     ws["A1"].font = Font(bold=True, size=14)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max(1, len(headers)))
@@ -316,12 +360,14 @@ KIND_TITLES = {
     "annual": "Rapport annuel",
     "agent": "Rapport par agent",
     "custom": "Rapport personnalisé",
+    "all": "Tout l'historique",
 }
 
 DATASET_TITLES = {
     "transactions": "Dépôts / Retraits",
     "sales": "Ventes",
     "stock": "État du stock",
+    "stock_movements": "Mouvements de stock",
 }
 
 
@@ -338,6 +384,10 @@ def generate(
         rows = fetch_stock()
         headers = STOCK_HEADERS
         title = DATASET_TITLES["stock"]
+    elif dataset == "stock_movements":
+        rows = fetch_stock_movements(date_from, date_to, agent=agent)
+        headers = STOCK_MOVEMENTS_HEADERS
+        title = DATASET_TITLES["stock_movements"]
     else:
         dataset = "transactions"
         rows = fetch_transactions(date_from, date_to, agent=agent)
@@ -346,6 +396,7 @@ def generate(
 
     kind_label = KIND_TITLES.get(kind, "Rapport personnalisé")
     if dataset == "stock":
+        # « État du stock » = photo actuelle (sans période).
         subtitle = f"Au {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     else:
         subtitle = f"Du {date_from} au {date_to}"

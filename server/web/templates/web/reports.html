@@ -43,7 +43,8 @@
           <select name="dataset" class="form-select" id="dataset">
             <option value="transactions">Dépôts / Retraits</option>
             <option value="sales">Ventes</option>
-            <option value="stock">État du stock</option>
+            <option value="stock_movements">Mouvements de stock (par période)</option>
+            <option value="stock">État du stock (photo actuelle)</option>
           </select>
         </div>
         <div class="col-sm-6">
@@ -52,6 +53,7 @@
             <option value="daily">Journalier (aujourd'hui)</option>
             <option value="monthly" selected>Mensuel (mois courant)</option>
             <option value="annual">Annuel (année courante)</option>
+            <option value="all">Tout l'historique</option>
             <option value="custom">Personnalisé (dates choisies)</option>
           </select>
         </div>
@@ -88,7 +90,9 @@
     <h2 class="h5 mb-3">Astuces</h2>
     <ul class="text-muted small">
       <li>Le rapport est généré depuis les données <strong>synchronisées</strong> reçues du poste.</li>
-      <li>L'état du stock ignore la période (il prend la photo actuelle).</li>
+      <li><strong>Tout l'historique</strong> : exporte toutes les opérations depuis le début.</li>
+      <li><strong>Mouvements de stock</strong> : entrées/sorties filtrées par mois ou par année.</li>
+      <li>« État du stock » ignore la période (photo actuelle du stock).</li>
       <li>Le filtre Agent fait une recherche par contenu de nom (insensible à la casse).</li>
       <li>Les rapports PDF passent en orientation paysage si plus de 6 colonnes.</li>
     </ul>
@@ -100,7 +104,7 @@
   function refreshPeriodFields() {
     var kind = document.getElementById('kind').value;
     var dataset = document.getElementById('dataset').value;
-    var disable = (dataset === 'stock') || ['daily', 'monthly', 'annual'].includes(kind);
+    var disable = (dataset === 'stock') || ['daily', 'monthly', 'annual', 'all'].includes(kind);
     document.querySelectorAll('.period-field input').forEach(function (i) {
       i.disabled = disable;
     });
