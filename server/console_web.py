@@ -16,6 +16,7 @@ Variables d'environnement optionnelles :
   EMAB_WEB_HOST  hôte d'écoute (défaut 127.0.0.1 ; mettre 0.0.0.0 pour
                  autoriser les postes du réseau local à se synchroniser ici)
   EMAB_DATA_DIR  dossier de données (défaut %LOCALAPPDATA%/EMAB GROUP/ConsoleWeb)
+  EMAB_RECEIPT_PRINTER  nom Windows exact de l'imprimante ticket à imposer
 """
 from __future__ import annotations
 
@@ -204,9 +205,18 @@ def _pick_receipt_printer() -> str:
 
     Écarte les imprimantes virtuelles (Print to PDF, XPS, OneNote, Fax…) qui
     font apparaître une boîte « Enregistrer en PDF » au lieu d'imprimer.
+
+    L'imprimante thermique Windows par défaut est prioritaire : c'est le choix
+    explicite de l'utilisateur et cela évite de continuer à envoyer les tickets
+    vers le pilote d'une ancienne imprimante thermique encore installé. Une
+    imprimante bureautique par défaut ne prend toutefois pas la place d'une
+    caisse thermique détectée.
     """
     virtual = ("pdf", "xps", "onenote", "fax", "anydesk")
-    thermal = ("pos", "thermal", "ticket", "receipt", "caisse", "58mm", "80mm", "xprinter", "rongta")
+    thermal = (
+        "pos", "thermal", "ticket", "receipt", "caisse", "58mm", "80mm",
+        "xprinter", "rongta", "pozer", "tp150",
+    )
 
     def is_virtual(name: str) -> bool:
         low = name.lower()
@@ -217,14 +227,26 @@ def _pick_receipt_printer() -> str:
         return any(k in low for k in thermal)
 
     default, names = _windows_printers()
-    # 1) Une imprimante à tickets (thermique) installée passe en priorité.
+
+    # Une valeur explicite permet aussi aux installations multi-imprimantes de
+    # verrouiller la caisse sur un nom précis sans dépendre de l'ordre Windows.
+    requested = os.environ.get("EMAB_RECEIPT_PRINTER", "").strip()
+    if requested:
+        for name in names:
+            if name.casefold() == requested.casefold() and not is_virtual(name):
+                return name
+
+    # 1) Le choix explicite de Windows passe avant les anciens pilotes thermiques
+    # encore installés. C'est notamment nécessaire après un remplacement.
+    if default and not is_virtual(default) and is_thermal(default):
+        return default
+    # 2) Sinon, recherche une imprimante à tickets connue.
     for name in names:
         if not is_virtual(name) and is_thermal(name):
             return name
-    # 2) Sinon l'imprimante par défaut de Windows, si elle est physique.
+    # 3) Sinon l'imprimante physique par défaut, puis la première disponible.
     if default and not is_virtual(default):
         return default
-    # 3) Sinon la première imprimante physique trouvée.
     for name in names:
         if not is_virtual(name):
             return name
@@ -241,7 +263,9 @@ def _seed_kiosk_printer(profile_dir: str) -> None:
     """
     printer = _pick_receipt_printer()
     if not printer:
+        print("[Impression] Aucune imprimante physique Windows détectée.")
         return
+    print(f"[Impression] Imprimante ticket sélectionnée : {printer}")
     try:
         prefs_path = Path(profile_dir) / "Default" / "Preferences"
         prefs_path.parent.mkdir(parents=True, exist_ok=True)
