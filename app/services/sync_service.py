@@ -54,12 +54,12 @@ PUSH_TABLES: Dict[str, List[str]] = {
     ],
     "products": [
         "uuid", "reference", "nom", "description", "prix_unitaire",
-        "quantite_stock", "seuil_alerte", "categorie", "unite", "prix_achat",
+        "quantite_stock", "stock_initial", "stock_initial_source", "seuil_alerte", "categorie", "unite", "prix_achat",
         "stock_max", "emplacement", "actif", "created_at", "updated_at",
     ],
     "stock_movements": [
         "uuid", "product_id", "product_uuid", "product_nom", "type", "quantite",
-        "stock_apres", "motif", "sale_id", "agent_id", "agent_uuid",
+        "stock_apres", "is_initial", "stock_compte", "motif", "sale_id", "agent_id", "agent_uuid",
         "agent_nom", "created_at", "deleted",
     ],
     "transactions": [
@@ -94,7 +94,7 @@ PULL_TABLES: Dict[str, List[str]] = {
     ],
     "products": [
         "uuid", "reference", "nom", "description", "prix_unitaire",
-        "quantite_stock", "seuil_alerte", "categorie", "unite", "prix_achat",
+        "quantite_stock", "stock_initial", "stock_initial_source", "seuil_alerte", "categorie", "unite", "prix_achat",
         "stock_max", "emplacement", "actif", "created_at", "updated_at",
     ],
     "clients": [
@@ -111,7 +111,7 @@ PULL_TABLES: Dict[str, List[str]] = {
     # `product_id` local est résolu via `product_uuid`.
     "stock_movements": [
         "uuid", "product_id", "product_uuid", "product_nom", "type", "quantite",
-        "stock_apres", "motif", "sale_id", "agent_id", "agent_uuid",
+        "stock_apres", "is_initial", "stock_compte", "motif", "sale_id", "agent_id", "agent_uuid",
         "agent_nom", "created_at", "deleted",
     ],
     # Ventes créées depuis le web.

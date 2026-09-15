@@ -12,9 +12,6 @@
   {% endif %}
 </div>
 
-{% if messages %}
-  {% for m in messages %}<div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>{% endfor %}
-{% endif %}
 
 <form method="get" class="filter-card mb-3">
   <div class="row g-2">

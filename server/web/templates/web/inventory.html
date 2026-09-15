@@ -19,9 +19,6 @@
 </div>
 
 {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
-{% if messages %}
-  {% for m in messages %}<div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>{% endfor %}
-{% endif %}
 
 <div class="row g-3 mb-3">
   <div class="col-sm-4">

@@ -8,11 +8,6 @@
   <span class="text-muted">{{ pending_count }} demande(s) en attente</span>
 </div>
 
-{% if messages %}
-  {% for m in messages %}
-    <div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>
-  {% endfor %}
-{% endif %}
 
 <ul class="nav nav-pills mb-3">
   <li class="nav-item">

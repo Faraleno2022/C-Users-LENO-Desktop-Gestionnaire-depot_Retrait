@@ -1,0 +1,20 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Vérification et recalcul{% endblock %}
+{% block content %}
+<h1 class="h3">Vérification des stocks et des soldes</h1>
+<p>Stock initial + entrées − sorties = stock final. Les ventes débitent une seule fois le compte client.</p>
+{% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+<div class="alert alert-info">{{ plan.changes|length }} ligne(s) à recalculer. {{ plan.issues|length }} point(s) à vérifier.
+Une sauvegarde et le détail des valeurs avant/après sont conservés lors du recalcul.</div>
+<div class="table-responsive"><table class="table table-striped">
+<thead><tr><th>Produit</th><th>Stock initial</th><th>Entrées</th><th>Sorties</th><th>Stock calculé</th><th>Stock enregistré</th></tr></thead>
+<tbody>{% for s in plan.stocks %}<tr><td>{{ s.nom }}</td><td>{{ s.initial|num }}{% if s.source == "solde_premier_mouvement" %}<br><small class="text-muted">Reconstitué du premier mouvement</small>{% endif %}</td><td>{{ s.entries|num }}</td><td>{{ s.exits|num }}</td><td>{{ s.closing|num }}</td><td>{{ s.previous|num }}</td></tr>{% empty %}<tr><td colspan="6">Aucun stock recalculable dans cet historique.</td></tr>{% endfor %}</tbody></table></div>
+{% if plan.issues %}<h2 class="h5">Points à vérifier</h2><ul>{% for issue in plan.issues %}<li>{{ issue.label|default:issue.uuid }} : {{ issue.reason }}</li>{% endfor %}</ul>{% endif %}
+<p>Les prix historiques des ventes sont conservés. Les dépôts et retraits saisis ne sont pas remplacés. Un stock initial manquant ne peut être confirmé qu'à partir de l'historique ou d'un inventaire.</p>
+<form method="post">{% csrf_token %}<input type="hidden" name="plan_token" value="plan_{{ token }}">
+<button class="btn btn-primary" {% if not plan.changes %}disabled{% endif %}>Sauvegarder et appliquer ces recalculs</button>
+<a class="btn btn-outline-secondary" href="{% url 'web:reconciliation' %}">Actualiser le diagnostic</a>
+<a class="btn btn-outline-secondary" href="?export=json">Télécharger le diagnostic</a></form>
+{% if latest %}<p class="text-muted mt-3">Dernier recalcul : {{ latest.created_at }} · {{ latest.report.changes|length }} ligne(s) corrigée(s).</p>{% endif %}
+{% endblock %}

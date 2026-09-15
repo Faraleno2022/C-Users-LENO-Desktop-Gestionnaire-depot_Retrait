@@ -8,9 +8,6 @@
 </div>
 
 {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
-{% if messages %}
-  {% for m in messages %}<div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>{% endfor %}
-{% endif %}
 
 <div class="alert alert-info small">
   <i class="bi bi-info-circle"></i>

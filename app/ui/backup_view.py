@@ -122,6 +122,9 @@ class BackupView(QWidget):
         check_btn.clicked.connect(self._refresh_system_check)
         sl.addWidget(check_btn, alignment=Qt.AlignLeft)
         layout.addWidget(sys_card)
+        recalc_btn = QPushButton("Vérifier et recalculer les stocks et les soldes")
+        recalc_btn.clicked.connect(self._open_reconciliation)
+        layout.addWidget(recalc_btn)
 
         # --- Backup card ------------------------------------------------
         b_card = QFrame()
@@ -532,5 +535,13 @@ class BackupView(QWidget):
             return
         info(self, "Réinitialisation", "Données supprimées.")
         self.refresh()
+        if self.on_data_changed:
+            self.on_data_changed()
+
+    def _open_reconciliation(self):
+        if not self.current_user.is_admin():
+            return
+        from app.ui.reconciliation_dialog import ReconciliationDialog
+        ReconciliationDialog(self).exec()
         if self.on_data_changed:
             self.on_data_changed()

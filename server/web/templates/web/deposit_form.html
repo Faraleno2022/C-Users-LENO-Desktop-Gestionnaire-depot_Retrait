@@ -12,9 +12,6 @@
     </p>
 
     {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
-    {% if messages %}
-      {% for m in messages %}<div class="alert alert-{{ m.tags|default:'info' }}">{{ m }}</div>{% endfor %}
-    {% endif %}
 
     <form method="post" class="card p-4 shadow-sm"
           data-balance-url="{% url 'web:matricule_balance_api' %}">
