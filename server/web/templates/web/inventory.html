@@ -44,6 +44,7 @@
 <div class="alert alert-info small">
   <i class="bi bi-info-circle"></i>
   Saisissez la quantité <strong>réellement comptée</strong> pour chaque produit.
+  Une case vide signifie « non compté » ; saisissez 0 uniquement si aucun article n'est présent.
   Les produits laissés vides ne sont pas touchés. À l'enregistrement, chaque écart
   génère automatiquement un mouvement d'ajustement (entrée ou sortie).
 </div>
@@ -60,7 +61,7 @@
       </div>
       <div class="col-md-6 text-md-end">
         <span class="text-muted small me-2">Écart de valeur estimé :</span>
-        <strong id="ecartValueTotal">0 GNF</strong>
+        <strong id="ecartValueTotal">Aucun comptage saisi</strong>
       </div>
     </div>
   </div>
@@ -89,7 +90,7 @@
             <td class="text-end">
               <input type="number" step="1" min="0" name="count_{{ p.id }}"
                      class="form-control form-control-sm text-end count-input"
-                     placeholder="{{ p.quantite_stock|stringformat:'.0f' }}">
+                     placeholder="À compter">
             </td>
             <td class="text-end ecart fw-bold">—</td>
           </tr>
@@ -114,6 +115,7 @@
 
     function recompute() {
       var totalEcartValue = 0;
+      var countedProducts = 0;
       document.querySelectorAll('.count-input').forEach(function (input) {
         var row = input.closest('tr');
         var theoCell = row.querySelector('.theo');
@@ -125,7 +127,12 @@
           ecartCell.className = 'text-end ecart fw-bold';
           return;
         }
-        var counted = parseFloat(input.value) || 0;
+        var counted = parseFloat(input.value);
+        if (!Number.isFinite(counted) || counted < 0) {
+          ecartCell.textContent = "Quantité invalide";
+          return;
+        }
+        countedProducts += 1;
         var ecart = counted - theo;
         ecartCell.textContent = (ecart > 0 ? '+' : '') + fmt(ecart);
         ecartCell.className = 'text-end ecart fw-bold ' +
@@ -133,7 +140,7 @@
         totalEcartValue += ecart * prix;
       });
       document.getElementById('ecartValueTotal').textContent =
-        (totalEcartValue > 0 ? '+' : '') + fmt(Math.round(totalEcartValue)) + ' GNF';
+        countedProducts ? (totalEcartValue > 0 ? '+' : '') + fmt(Math.round(totalEcartValue)) + ' GNF' : 'Aucun comptage saisi';
     }
 
     document.querySelectorAll('.count-input').forEach(function (input) {

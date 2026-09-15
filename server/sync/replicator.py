@@ -224,9 +224,11 @@ class Replicator:
     def run_once(self) -> dict:
         """Push puis pull sur toutes les tables. Retourne un résumé."""
         summary: Dict[str, dict] = {}
+        # Envoyer tous les mouvements avant de recevoir les stocks calculés.
         for table in TABLE_ORDER:
             pushed = self._push_table(table)
+            summary[table] = {"pushed": pushed, "inserted": 0, "updated": 0}
+        for table in TABLE_ORDER:
             ins, upd = self._pull_table(table)
-            if pushed or ins or upd:
-                summary[table] = {"pushed": pushed, "inserted": ins, "updated": upd}
-        return summary
+            summary[table].update(inserted=ins, updated=upd)
+        return {table: counts for table, counts in summary.items() if any(counts.values())}

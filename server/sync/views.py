@@ -15,6 +15,7 @@ from web.operations import operation_transaction
 from rest_framework.response import Response
 
 from sync.models import TABLE_MODELS
+from sync.stock_projection import protect_projection, refresh_stock
 
 
 def root(request):
@@ -113,6 +114,7 @@ def push(request):
         return Response({"detail": "Lot trop volumineux (maximum 1000 lignes)."}, status=400)
     try:
         with operation_transaction():
+            affected_products = set()
             for record in records:
                 if not isinstance(record, dict):
                     raise ValueError("Chaque enregistrement doit être un objet.")
@@ -123,12 +125,30 @@ def push(request):
                 if not isinstance(uuid, str) or len(uuid) > 36:
                     raise ValueError("UUID invalide.")
                 defaults = _coerce(model, record, allowed)
-                defaults["device"] = device
-                _, was_created = model.objects.update_or_create(uuid=uuid, defaults=defaults)
+                obj = model.objects.filter(uuid=uuid).first()
+                was_created = obj is None
+                if was_created:
+                    obj = model.objects.create(uuid=uuid, device=device, **defaults)
+                else:
+                    refresh = protect_projection(table, obj, defaults)
+                    changed = any(getattr(obj, key) != value for key, value in defaults.items())
+                    if changed or refresh:
+                        for key, value in defaults.items():
+                            setattr(obj, key, value)
+                        obj.device = device
+                        # Renvoyer aussi au poste le total absolu refusé.
+                        obj.save()
+                if table == 'products':
+                    affected_products.add(obj.uuid)
+                elif table == 'stock_movements' and was_created:
+                    if not obj.product_uuid:
+                        raise ValueError('UUID du produit requis pour un nouveau mouvement.')
+                    affected_products.add(obj.product_uuid)
                 if was_created:
                     created += 1
                 else:
                     updated += 1
+            refresh_stock(affected_products)
     except (ValueError, TypeError, OverflowError, ValidationError, IntegrityError) as exc:
         return Response({"detail": f"Lot rejeté : {exc}"}, status=status.HTTP_400_BAD_REQUEST)
 

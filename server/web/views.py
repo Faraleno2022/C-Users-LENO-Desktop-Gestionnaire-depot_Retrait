@@ -24,7 +24,7 @@ from sync.models import (
 )
 from web import reports as web_reports
 from web.accounting import add, subtract, multiply, number
-from web.operations import operation_transaction
+from web.operations import operation_transaction, snapshot_read
 from web.reports import build_excel, build_pdf, _fmt_money, _fmt_num
 
 
@@ -1757,6 +1757,7 @@ def trash(request):
 
 
 @login_required(login_url="web:login")
+@snapshot_read
 def stock_movements(request):
     from django.db.models.functions import Substr
     from web.stock_statement import statement
@@ -1898,7 +1899,7 @@ def inventory(request):
                     adjustments.append((p.nom, theoretical, counted, ecart))
 
                 if not adjustments:
-                    messages.info(request, "Aucun écart : tous les stocks comptés sont conformes.")
+                    messages.info(request, "Aucune quantité comptée saisie : aucun stock modifié.")
                 else:
                     detail = "; ".join(
                         f"{nom}: {theo:g}→{cnt:g} ({'+' if ec > 0 else ''}{ec:g})"

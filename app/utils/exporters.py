@@ -37,8 +37,11 @@ def export_to_excel(file_path: Path, title: str, headers: Sequence[str], rows: S
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center")
 
-    for row in rows:
-        ws.append(list(row))
+    for row_index, row in enumerate(rows, 4):
+        ws.append([getattr(value, 'numeric_value', value) for value in row])
+        for column, value in enumerate(row, 1):
+            if hasattr(value, 'number_format'):
+                ws.cell(row_index, column).number_format = value.number_format
 
     for cells in ws.iter_rows():
         for cell in cells:
