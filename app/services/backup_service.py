@@ -106,6 +106,7 @@ def restore_backup(backup_path: Path) -> None:
             staged.commit()
             database._apply_post_migrations(staged)
             database._allow_missing_agents(staged)
+            database._migrate_reconciliation(staged)
             if staged.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise BackupError("La sauvegarde contient des références de données invalides.")
         except (sqlite3.Error, OSError) as exc:

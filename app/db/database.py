@@ -53,6 +53,7 @@ def init_database() -> None:
     conn.commit()
     _apply_post_migrations(conn)
     _allow_missing_agents(conn)
+    _migrate_reconciliation(conn)
 
 
 def _apply_post_migrations(conn) -> None:
@@ -227,6 +228,35 @@ def _allow_missing_agents(conn):
                 conn.execute(index)
             conn.execute("DELETE FROM app_settings WHERE key IN (?, ?)",
                          (f"pull_since_{table}", f"pull_since_{table}_uuid"))
+
+
+def _migrate_reconciliation(conn):
+    """Ajoute les références du journal et autorise un inventaire sans écart."""
+    import re
+    for table, fields in {
+        'products': {'stock_initial': 'REAL', 'stock_initial_source': "TEXT NOT NULL DEFAULT ''"},
+        'stock_movements': {'is_initial': 'INTEGER NOT NULL DEFAULT 0', 'stock_compte': 'REAL'},
+    }.items():
+        columns = {r['name'] for r in conn.execute(f'PRAGMA table_info({table})')}
+        for name, definition in fields.items():
+            if name not in columns:
+                conn.execute(f'ALTER TABLE {table} ADD COLUMN {name} {definition}')
+    conn.commit()
+    sql = conn.execute("SELECT sql FROM sqlite_master WHERE name='stock_movements'").fetchone()[0]
+    if re.search(r'quantite\s*>\s*0', sql):
+        indexes = [r[0] for r in conn.execute("SELECT sql FROM sqlite_master WHERE tbl_name='stock_movements' AND type IN ('index','trigger') AND sql IS NOT NULL")]
+        sequence = conn.execute("SELECT seq FROM sqlite_sequence WHERE name='stock_movements'").fetchone()
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            create = sql.replace('stock_movements', 'stock_movements_rebuild', 1)
+            conn.execute(re.sub(r'quantite\s*>\s*0', 'quantite >= 0', create))
+            conn.execute('INSERT INTO stock_movements_rebuild SELECT * FROM stock_movements')
+            conn.execute('DROP TABLE stock_movements')
+            conn.execute('ALTER TABLE stock_movements_rebuild RENAME TO stock_movements')
+            if sequence:
+                conn.execute("UPDATE sqlite_sequence SET seq=MAX(seq, ?) WHERE name='stock_movements'", (sequence[0],))
+            for index in indexes:
+                conn.execute(index)
 
 
 def close_connection() -> None:

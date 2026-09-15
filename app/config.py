@@ -8,7 +8,7 @@ from pathlib import Path
 APP_NAME = "EMAB GROUP — Gestionnaire Dépôt / Retrait"
 # Version de l'app desktop. À INCRÉMENTER à chaque release publiée sur GitHub
 # (tag « desktop-vX.Y.Z » + installateur ; reporter la valeur dans installer.iss).
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 ORG_NAME = "EMAB GROUP"
 
 IS_FROZEN = bool(getattr(sys, "frozen", False))

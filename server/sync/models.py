@@ -80,6 +80,8 @@ class Product(SyncedModel):
     description = models.TextField(blank=True, default="")
     prix_unitaire = models.FloatField(default=0)
     quantite_stock = models.FloatField(default=0)
+    stock_initial = models.FloatField(null=True, blank=True)
+    stock_initial_source = models.CharField(max_length=40, blank=True, default="")
     seuil_alerte = models.FloatField(default=0)
     categorie = models.CharField(max_length=120, blank=True, default="")
     unite = models.CharField(max_length=40, blank=True, default="")
@@ -104,6 +106,8 @@ class StockMovement(SyncedModel):
     type = models.CharField(max_length=10)
     quantite = models.FloatField()
     stock_apres = models.FloatField()
+    is_initial = models.BooleanField(default=False)
+    stock_compte = models.FloatField(null=True, blank=True)
     motif = models.CharField(max_length=255, blank=True, default="")
     sale_id = models.IntegerField(null=True, blank=True)
     agent_id = models.IntegerField(null=True, blank=True)
@@ -283,11 +287,12 @@ TABLE_MODELS = {
     "products": (Product, [
         "reference", "nom", "description", "prix_unitaire", "quantite_stock",
         "seuil_alerte", "categorie", "unite", "prix_achat", "stock_max",
+        "stock_initial", "stock_initial_source",
         "emplacement", "actif", "created_at", "updated_at",
     ]),
     "stock_movements": (StockMovement, [
         "product_id", "product_uuid", "product_nom", "type", "quantite",
-        "stock_apres", "motif", "sale_id", "agent_id", "agent_uuid",
+        "stock_apres", "is_initial", "stock_compte", "motif", "sale_id", "agent_id", "agent_uuid",
         "agent_nom", "created_at", "deleted",
     ]),
     "transactions": (Transaction, [
@@ -319,3 +324,11 @@ TABLE_MODELS = {
 class OperationLock(models.Model):
     """Verrou local des écritures de stock et de solde ; jamais synchronisé."""
     id = models.PositiveSmallIntegerField(primary_key=True)
+
+
+class ReconciliationRun(models.Model):
+    """Rapport et sauvegarde métier avant recalcul, locaux à cette base."""
+    version = models.CharField(max_length=40, unique=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    report = models.JSONField(default=dict)
+    snapshot = models.JSONField(default=dict)

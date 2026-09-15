@@ -977,7 +977,7 @@ def product_new(request):
                     unite=unite,
                     prix_achat=prix_achat,
                     prix_unitaire=prix,
-                    quantite_stock=qte,
+                    quantite_stock=qte, stock_initial=qte, stock_initial_source="creation",
                     seuil_alerte=seuil,
                     stock_max=stock_max,
                     emplacement=emplacement,
@@ -990,7 +990,7 @@ def product_new(request):
                     agent = _current_remote_user(request)
                     StockMovement.objects.create(
                         uuid=str(uuid_mod.uuid4()), product_id=p.id, product_uuid=p.uuid,
-                        product_nom=p.nom, type="entree", quantite=qte, stock_apres=qte,
+                        product_nom=p.nom, type="entree", quantite=qte, stock_apres=qte, is_initial=True,
                         motif="Stock initial",
                         agent_id=agent.id if agent else None,
                         agent_uuid=agent.uuid if agent else "",
@@ -1379,7 +1379,7 @@ def stock_request_validate(request, pk):
             nom=req.product_nom,
             description=req.new_description,
             prix_unitaire=req.new_prix_unitaire,
-            quantite_stock=0,
+            quantite_stock=0, stock_initial=0, stock_initial_source="creation",
             seuil_alerte=req.new_seuil_alerte,
             actif=True,
             created_at=now,
@@ -1758,63 +1758,90 @@ def trash(request):
 
 @login_required(login_url="web:login")
 def stock_movements(request):
-    """Journal des mouvements de stock (entrées / sorties), lecture seule.
-
-    Trace toutes les variations de stock : réapprovisionnements, ventes,
-    retraits de produits, ajustements d'inventaire, pertes/casses.
-    """
-    qs = StockMovement.objects.filter(deleted=False)
+    from django.db.models.functions import Substr
+    from web.stock_statement import statement
+    qs = StockMovement.objects.all()
     product = (request.GET.get("product") or "").strip()
+    product_uuid = (request.GET.get("product_uuid") or "").strip()
     type_ = (request.GET.get("type") or "").strip()
     date_from = (request.GET.get("date_from") or "").strip()
     date_to = (request.GET.get("date_to") or "").strip()
     agent = (request.GET.get("agent") or "").strip()
-
-    if product:
+    options = list(Product.objects.order_by('nom', 'uuid').values('id', 'uuid', 'nom', 'reference'))
+    selected = Product.objects.all()
+    if product_uuid:
+        selected = selected.filter(uuid=product_uuid)
+        qs = qs.filter(product_uuid=product_uuid)
+    elif product:
+        matching = qs.filter(product_nom__icontains=product).values_list('product_uuid', flat=True)
+        selected = selected.filter(Q(nom__icontains=product) | Q(uuid__in=matching))
         qs = qs.filter(product_nom__icontains=product)
-    if type_ in ("entree", "sortie"):
+    error = None
+    for value in (date_from, date_to):
+        try:
+            if value and parse_date(value) is None:
+                error = 'Date invalide. Utilisez une date au format AAAA-MM-JJ.'
+        except ValueError:
+            error = 'Date invalide. Utilisez une date au format AAAA-MM-JJ.'
+    if date_from and date_to and date_from > date_to:
+        error = 'La date de début doit précéder la date de fin.'
+    if error:
+        messages.error(request, error)
+        qs = qs.none()
+        statement_rows, issues = [], []
+    else:
+        statement_rows, issues = statement(list(selected.order_by('nom', 'uuid').values()), date_from, date_to)
+        qs = qs.annotate(day=Substr('created_at', 1, 10))
+        if date_from:
+            qs = qs.filter(day__gte=date_from)
+        if date_to:
+            qs = qs.filter(day__lte=date_to)
+    if type_ in ('entree', 'sortie'):
         qs = qs.filter(type=type_)
-    if date_from:
-        qs = qs.filter(created_at__gte=f"{date_from} 00:00:00")
-    if date_to:
-        qs = qs.filter(created_at__lte=f"{date_to} 23:59:59")
     if agent:
         qs = qs.filter(agent_nom__icontains=agent)
-
-    qs = qs.order_by("-created_at", "-id")
-
-    export = (request.GET.get("export") or "").strip()
-    if export in ("xlsx", "pdf"):
-        headers = ["Date", "Produit", "Type", "Quantité", "Stock après",
-                   "Motif", "Agent"]
-        rows = [[
-            m.created_at, m.product_nom,
-            "Entrée" if m.type == "entree" else "Sortie",
-            _fmt_num(m.quantite), _fmt_num(m.stock_apres),
-            m.motif or "", m.agent_nom or "",
-        ] for m in qs]
-        sub = "Mouvements de stock"
-        if date_from or date_to:
-            sub += f" — du {date_from or '…'} au {date_to or '…'}"
-        return _export_response(export, "mouvements_stock", "Mouvements de stock",
-                                headers, rows, subtitle=sub)
-
-    total_entrees = qs.filter(type="entree").aggregate(s=Sum("quantite"))["s"] or 0
-    total_sorties = qs.filter(type="sortie").aggregate(s=Sum("quantite"))["s"] or 0
-    n_total = qs.count()
-    page_obj = _paginate(request, qs)
-
-    return render(request, "web/stock_movements.html", {
-        "page_obj": page_obj,
-        "n_total": n_total,
-        "total_entrees": total_entrees,
-        "total_sorties": total_sorties,
-        "filters": {
-            "product": product, "type": type_,
-            "date_from": date_from, "date_to": date_to, "agent": agent,
-        },
-        "remote": _remote(request),
+    qs = qs.order_by('-created_at', '-id')
+    export = (request.GET.get('export') or '').strip()
+    if export in ('xlsx', 'pdf'):
+        headers = ['Produit', 'Stock initial / début', 'Entrées', 'Sorties', 'Stock final', 'Stock actuel']
+        rows = [[s['nom'], *([_fmt_num(s[k]) for k in ('opening','entries','exits','closing')] if s['known'] else ['À vérifier'] * 4), _fmt_num(s['recorded'])] for s in statement_rows]
+        rows += [['', '', '', '', '', ''], ['Date', 'Produit', 'Type', 'Quantité', 'Stock après', 'Motif']]
+        rows += [[m.created_at, m.product_nom, 'Initial' if m.is_initial else ('Entrée' if m.type == 'entree' else 'Sortie'), _fmt_num(m.quantite), _fmt_num(m.stock_apres), m.motif or ''] for m in qs]
+        return _export_response(export, 'mouvements_stock', 'Mouvements de stock', headers, rows,
+            subtitle=f"Stock initial + entrées - sorties = stock final ; période {date_from or 'origine'} à {date_to or 'maintenant'}")
+    return render(request, 'web/stock_movements.html', {
+        'page_obj': _paginate(request, qs), 'n_total': qs.count(),
+        'statement_rows': statement_rows, 'statement_issues': issues,
+        'product_options': options, 'detail_filtered': bool(type_ or agent),
+        'filters': {'product': product, 'product_uuid': product_uuid, 'type': type_, 'date_from': date_from, 'date_to': date_to, 'agent': agent},
+        'remote': _remote(request),
     })
+
+
+@login_required(login_url="web:login")
+@role_required("super_admin", "admin")
+def reconciliation(request):
+    from sync.reconciliation import preview, apply_reconciliation
+    from sync.reconciliation_engine import plan_token
+    from sync.models import ReconciliationRun
+    error = None
+    if request.method == 'POST':
+        token = request.POST.get('plan_token', '')
+        try:
+            if not token.startswith('plan_'):
+                raise ValueError('Actualisez le diagnostic avant de recalculer.')
+            report = apply_reconciliation(token[5:])
+            messages.success(request, f"Recalcul terminé : {len(report['changes'])} lignes corrigées ; {len(report['issues'])} points à vérifier.")
+            return redirect('web:reconciliation')
+        except (ValueError, OSError, RuntimeError) as exc:
+            error = str(exc)
+    plan = preview()
+    if request.GET.get('export') == 'json':
+        response = JsonResponse(plan, json_dumps_params={'ensure_ascii': False, 'indent': 2})
+        response['Content-Disposition'] = 'attachment; filename="diagnostic_recalcul.json"'
+        return response
+    return render(request, 'web/reconciliation.html', {'plan': plan, 'token': plan_token(plan), 'error': error,
+        'latest': ReconciliationRun.objects.order_by('-created_at').first(), 'remote': _remote(request)})
 
 
 @login_required(login_url="web:login")
@@ -1854,13 +1881,13 @@ def inventory(request):
                         raise ValueError(f"Quantité comptée invalide pour « {p.nom} ».")
                     theoretical = float(p.quantite_stock or 0)
                     ecart = subtract(counted, theoretical)
-                    if ecart == 0:
-                        continue  # pas d'écart → rien à faire
+                    # Un comptage confirmé reste une référence même sans écart
+                    # avec le stock affiché ; il peut résoudre un ancien journal incohérent.
                     mv_type = "entree" if ecart > 0 else "sortie"
                     StockMovement.objects.create(
                         uuid=str(uuid_mod.uuid4()),
                         product_id=p.id, product_uuid=p.uuid, product_nom=p.nom,
-                        type=mv_type, quantite=abs(ecart), stock_apres=counted,
+                        type=mv_type, quantite=abs(ecart), stock_apres=counted, stock_compte=counted,
                         motif=motif, sale_id=None,
                         agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
                         created_at=_iso_now(),
@@ -1883,7 +1910,7 @@ def inventory(request):
                     )
                     messages.success(
                         request,
-                        f"Inventaire enregistré : {len(adjustments)} produit(s) ajusté(s).",
+                        f"Inventaire enregistré : {len(adjustments)} produit(s) compté(s).",
                     )
                 return redirect("web:inventory")
         except (ValueError, TypeError) as e:

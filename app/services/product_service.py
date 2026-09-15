@@ -97,6 +97,8 @@ def create_product(
             ),
         )
         product_id = cur.lastrowid
+        conn.execute("UPDATE products SET stock_initial=?, stock_initial_source='creation' WHERE id=?",
+                     (float(quantite_initiale), product_id))
         agent = auth_service.current_user()
         if quantite_initiale > 0:
             _record_movement(
@@ -247,6 +249,8 @@ def _record_movement(conn, product_id, product_nom, type_, quantite, stock_apres
             now_iso(),
         ),
     )
+    if motif == "Stock initial":
+        conn.execute("UPDATE stock_movements SET is_initial=1 WHERE id=?", (cur.lastrowid,))
     return cur.lastrowid
 
 

@@ -40,6 +40,7 @@ urlpatterns = [
     path("stock/validations/<int:pk>/valider/", views.stock_request_validate, name="stock_request_validate"),
     path("stock/validations/<int:pk>/rejeter/", views.stock_request_reject, name="stock_request_reject"),
     path("inventaire/", views.inventory, name="inventory"),
+    path("recalcul/", views.reconciliation, name="reconciliation"),
     path("mouvements/", views.stock_movements, name="stock_movements"),
     path("clients/", views.clients, name="clients"),
     path("clients/nouveau/", views.client_new, name="client_new"),

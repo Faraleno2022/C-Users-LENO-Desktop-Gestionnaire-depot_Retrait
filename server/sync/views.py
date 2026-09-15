@@ -49,6 +49,8 @@ def _coerce(model, record, allowed):
         field = model._meta.get_field(k)
         value = record[k]
         if value is None:
+            if k in ("stock_initial", "stock_compte"):
+                continue
             if field.null:
                 out[k] = None
             continue
@@ -59,9 +61,10 @@ def _coerce(model, record, allowed):
         if isinstance(value, float) and not isfinite(value):
             raise ValueError(f"Nombre non fini pour {k}.")
         if k in ("montant", "quantite") and float(value) <= 0:
-            if not (model.__name__ == "StockEntryRequest" and float(value) == 0):
+            if not ((model.__name__ == "StockEntryRequest" or
+                     (model.__name__ == "StockMovement" and record.get("stock_compte") is not None)) and float(value) == 0):
                 raise ValueError(f"{k} doit être strictement positif.")
-        if k in ("prix_unitaire", "prix_achat", "seuil_alerte", "stock_max", "montant_total", "new_prix_unitaire", "new_seuil_alerte") and float(value) < 0:
+        if k in ("prix_unitaire", "prix_achat", "seuil_alerte", "stock_max", "montant_total", "new_prix_unitaire", "new_seuil_alerte", "stock_initial", "stock_compte") and float(value) < 0:
             raise ValueError(f"{k} ne peut pas être négatif.")
         if field.choices and value not in dict(field.choices):
             raise ValueError(f"Valeur invalide pour {k}.")
