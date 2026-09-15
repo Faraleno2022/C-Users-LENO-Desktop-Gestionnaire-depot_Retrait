@@ -16,6 +16,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.backends import BaseBackend
 
 from sync.models import RemoteUser
+from web.middleware import password_version
 
 User = get_user_model()
 
@@ -47,7 +48,7 @@ class RemoteUserBackend(BaseBackend):
             return None
 
         # User miroir Django (sans mot de passe utilisable côté Django).
-        user, _ = User.objects.get_or_create(
+        user, created = User.objects.get_or_create(
             username=remote.identifiant,
             defaults={"first_name": remote.nom_complet[:30] or remote.identifiant},
         )
@@ -59,13 +60,16 @@ class RemoteUserBackend(BaseBackend):
         # Un super_admin a tous les droits dans l'admin Django (gestion des
         # Devices/jetons de synchronisation, consultation des données…).
         user.is_superuser = remote.role == "super_admin"
-        user.set_unusable_password()
+        if created or user.has_usable_password():
+            user.set_unusable_password()
         user.save()
 
         # On mémorise l'identité « métier » pour les templates et la vérif de rôle.
         if request is not None:
             request.session["remote_user"] = {
                 "id": remote.id,
+                "uuid": remote.uuid,
+                "auth_version": password_version(remote.password_hash),
                 "identifiant": remote.identifiant,
                 "nom_complet": remote.nom_complet,
                 "role": remote.role,

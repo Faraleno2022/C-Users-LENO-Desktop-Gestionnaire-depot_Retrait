@@ -12,6 +12,8 @@ Tous les documents portent un en-tête société configurable
 """
 from __future__ import annotations
 
+from html import escape
+
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Sequence
@@ -95,9 +97,9 @@ def _header_story(styles: dict, doc_title: str, title_color=_PRIMARY) -> list:
     if phones:
         contact.append(phones)
 
-    left = [Paragraph(info["name"], styles["company"])]
+    left = [Paragraph(escape(info["name"]), styles["company"])]
     for c in contact:
-        left.append(Paragraph(c, styles["company_info"]))
+        left.append(Paragraph(escape(c), styles["company_info"]))
 
     title_style = ParagraphStyle(
         "doc_title_colored", parent=styles["doc_title"], textColor=title_color
@@ -125,13 +127,13 @@ def _info_block(styles: dict, pairs: Sequence[tuple]) -> Table:
         left_lbl, left_val = pairs[i]
         cells = [
             Paragraph(f"<b>{left_lbl}</b>", styles["label"]),
-            Paragraph(str(left_val), styles["value"]),
+            Paragraph(escape(str(left_val)), styles["value"]),
         ]
         if i + 1 < len(pairs):
             right_lbl, right_val = pairs[i + 1]
             cells += [
                 Paragraph(f"<b>{right_lbl}</b>", styles["label"]),
-                Paragraph(str(right_val), styles["value"]),
+                Paragraph(escape(str(right_val)), styles["value"]),
             ]
         else:
             cells += ["", ""]
@@ -192,7 +194,7 @@ def _footer_story(styles: dict) -> list:
     info = settings_service.get_company_info()
     txt = info["footer"] or "Document généré automatiquement — Gestionnaire de stock"
     stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-    return [Spacer(1, 6 * mm), Paragraph(f"{txt} — Édité le {stamp}", styles["footer"])]
+    return [Spacer(1, 6 * mm), Paragraph(f"{escape(txt)} — Édité le {stamp}", styles["footer"])]
 
 
 def _build(file_path: Path, story: list, page_size=A4) -> Path:
@@ -250,7 +252,7 @@ def bon_mouvement_pdf(movement, product=None) -> Path:
 
     if movement.motif:
         story.append(Spacer(1, 4 * mm))
-        story.append(Paragraph(f"<b>Motif :</b> {movement.motif}", styles["value"]))
+        story.append(Paragraph(f"<b>Motif :</b> {escape(movement.motif)}", styles["value"]))
 
     story.append(Spacer(1, 10 * mm))
     sig_left = "Le magasinier" if is_entree else "Remis par (magasinier)"
@@ -298,7 +300,7 @@ def fiche_article_pdf(product, movements: Optional[List] = None) -> Path:
     ]))
     if product.description:
         story.append(Spacer(1, 3 * mm))
-        story.append(Paragraph(f"<b>Description :</b> {product.description}", styles["value"]))
+        story.append(Paragraph(f"<b>Description :</b> {escape(product.description)}", styles["value"]))
 
     story.append(Spacer(1, 6 * mm))
     story.append(Paragraph("<b>Historique des mouvements</b>", styles["value"]))

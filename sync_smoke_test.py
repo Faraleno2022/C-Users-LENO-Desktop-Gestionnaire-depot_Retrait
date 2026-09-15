@@ -94,10 +94,13 @@ def main() -> int:
     assert all(p["url"].endswith("/api/sync/push/") for p in fake.posts)
     tx_posts = [p for p in fake.posts if p["json"]["table"] == "transactions"]
     assert tx_posts and "uuid" in tx_posts[0]["json"]["records"][0]
-    # Les hash de mot de passe ne doivent pas être envoyés
+    # Les hashes bcrypt permettent l'auth web ; aucun mot de passe en clair.
     user_posts = [p for p in fake.posts if p["json"]["table"] == "users"]
-    assert all("password_hash" not in r for p in user_posts for r in p["json"]["records"])
-    print("OK en-têtes, URL et payload conformes (pas de password_hash)")
+    assert all(
+        r.get("password_hash", "").startswith("$2") and "password" not in r
+        for p in user_posts for r in p["json"]["records"]
+    )
+    print("OK en-têtes, URL et payload conformes (hash bcrypt, pas de mot de passe en clair)")
 
     pending_after = sync_service.pending_total()
     assert pending_after == 0, f"reste {pending_after} en attente"
@@ -108,6 +111,9 @@ def main() -> int:
     summary2 = sync_service.push_all()
     assert sum(summary2.values()) == 0 and not fake.posts
     print("OK second push : rien à envoyer")
+    assert product_service.get_product(prod.id).quantite_stock == 9
+    assert transaction_service.get_matricule_balance("MAT-1") == 2000
+    print("OK stock et solde inchangés après répétition du push")
 
     print("\nTest sync (poste) OK.")
     return 0

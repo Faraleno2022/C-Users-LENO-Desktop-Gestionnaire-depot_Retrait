@@ -19,11 +19,16 @@ de données pour survivre aux redémarrages.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple
 
 import requests
 
+from django.db.models import Q
+from django.utils.dateparse import parse_datetime
+from web.operations import operation_transaction
 from sync.models import TABLE_MODELS
 
 # Ordre de réplication : les tables référencées (users, products) d'abord.
@@ -46,19 +51,39 @@ class Replicator:
         self.token = token
         self.state_path = Path(state_path)
         self.state: Dict[str, str] = self._load_state()
+        if self.state.get("server_url", self.base_url) != self.base_url:
+            self.state = {}
+        self.state["server_url"] = self.base_url
 
     # -- État (filigranes) ----------------------------------------------------
 
     def _load_state(self) -> Dict[str, str]:
         try:
-            return json.loads(self.state_path.read_text(encoding="utf-8"))
+            value = json.loads(self.state_path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) and all(
+                isinstance(k, str) and isinstance(v, str) for k, v in value.items()
+            ) else {}
         except (OSError, ValueError):
             return {}
 
     def _save_state(self) -> None:
-        self.state_path.write_text(
-            json.dumps(self.state, indent=2), encoding="utf-8"
-        )
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                    dir=self.state_path.parent, prefix=self.state_path.name, delete=False) as out:
+                temporary = Path(out.name)
+                json.dump(self.state, out, indent=2)
+                out.flush()
+                os.fsync(out.fileno())
+            temporary.replace(self.state_path)
+        finally:
+            if temporary and temporary.exists():
+                temporary.unlink()
+
+    @staticmethod
+    def _after(since: str, after_uuid: str):
+        return Q(received_at__gt=since) | Q(received_at=since, uuid__gt=after_uuid)
 
     # -- HTTP -----------------------------------------------------------------
 
@@ -80,8 +105,8 @@ class Replicator:
         since = self.state.get(f"push_{table}") or ""
         qs = model.objects.all()
         if since:
-            qs = qs.filter(received_at__gt=since)
-        qs = qs.order_by("received_at", "id")
+            qs = qs.filter(self._after(since, self.state.get(f"push_{table}_uuid", "")))
+        qs = qs.order_by("received_at", "uuid")
 
         sent = 0
         while True:
@@ -105,13 +130,17 @@ class Replicator:
                 raise ReplicationError(
                     f"Push {table} rejeté ({resp.status_code}) : {resp.text[:160]}"
                 )
+            body = resp.json()
+            if not isinstance(body, dict) or body.get("skipped", 0):
+                raise ReplicationError(f"Push {table} incomplet : lot non acquitté.")
             sent += len(rows)
             # Avance le filigrane après chaque lot accepté.
             self.state[f"push_{table}"] = rows[-1].received_at.isoformat()
+            self.state[f"push_{table}_uuid"] = rows[-1].uuid
             self._save_state()
             qs = model.objects.filter(
-                received_at__gt=self.state[f"push_{table}"]
-            ).order_by("received_at", "id")
+                self._after(self.state[f"push_{table}"], self.state[f"push_{table}_uuid"])
+            ).order_by("received_at", "uuid")
         return sent
 
     # -- PULL distant -> local ------------------------------------------------
@@ -134,11 +163,12 @@ class Replicator:
     def _pull_table(self, table: str) -> Tuple[int, int]:
         model, fields = TABLE_MODELS[table]
         since = self.state.get(f"pull_{table}") or ""
+        after_uuid = self.state.get(f"pull_{table}_uuid", "")
         inserted = updated = 0
         while True:
             resp = requests.get(
                 f"{self.base_url}/api/sync/pull/",
-                params={"table": table, "since": since, "limit": BATCH},
+                params={"table": table, "since": since, "since_uuid": after_uuid, "limit": BATCH},
                 headers=self._headers(), timeout=TIMEOUT,
             )
             if resp.status_code == 401:
@@ -148,26 +178,42 @@ class Replicator:
                     f"Pull {table} rejeté ({resp.status_code}) : {resp.text[:160]}"
                 )
             body = resp.json()
-            records = body.get("records") or []
-            for rec in records:
-                uuid = rec.get("uuid")
-                if not uuid:
-                    continue
-                values = {f: rec.get(f) for f in fields if f in rec and rec.get(f) is not None}
-                obj = model.objects.filter(uuid=uuid).first()
-                if obj is None:
-                    model.objects.create(uuid=uuid, **values)
-                    inserted += 1
-                elif not self._identical(obj, values):
-                    # Sauvegarde uniquement si différent : évite de faire
-                    # avancer received_at et de créer une boucle d'écho.
-                    for k, v in values.items():
-                        setattr(obj, k, v)
-                    obj.save()
-                    updated += 1
-            since = body.get("next_since") or since
+            if not isinstance(body, dict) or not isinstance(body.get("records"), list):
+                raise ReplicationError(f"Pull {table} : réponse invalide.")
+            records = body["records"]
+            from sync.views import _coerce
+            blocked = False
+            with operation_transaction():
+                for rec in records:
+                    if not isinstance(rec, dict) or not isinstance(rec.get("uuid"), str) or not rec["uuid"]:
+                        raise ReplicationError(f"Pull {table} : enregistrement invalide.")
+                    uuid = rec["uuid"]
+                    values = _coerce(model, rec, fields)
+                    obj = model.objects.filter(uuid=uuid).first()
+                    if obj is None:
+                        model.objects.create(uuid=uuid, **values)
+                        inserted += 1
+                    elif not self._identical(obj, values):
+                        # Une saisie faite pendant l'appel réseau doit d'abord être poussée.
+                        pushed = parse_datetime(self.state.get(f"push_{table}", ""))
+                        pushed_uuid = self.state.get(f"push_{table}_uuid", "")
+                        if pushed is None or (obj.received_at, obj.uuid) > (pushed, pushed_uuid):
+                            blocked = True
+                            continue
+                        for k, v in values.items():
+                            setattr(obj, k, v)
+                        obj.save()
+                        updated += 1
+            if blocked:
+                break  # Rejouer la page après le prochain push.
+            next_since = body.get("next_since") or since
+            next_uuid = body.get("next_uuid") or ""
+            if body.get("has_more") and (next_since, next_uuid) == (since, after_uuid):
+                raise ReplicationError(f"Pull {table} : pagination bloquée.")
+            since, after_uuid = next_since, next_uuid
             if since:
                 self.state[f"pull_{table}"] = since
+                self.state[f"pull_{table}_uuid"] = after_uuid
                 self._save_state()
             if not body.get("has_more") or not records:
                 break

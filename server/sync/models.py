@@ -314,3 +314,8 @@ TABLE_MODELS = {
         "decision_motif", "resulting_movement_uuid",
     ]),
 }
+
+
+class OperationLock(models.Model):
+    """Verrou local des écritures de stock et de solde ; jamais synchronisé."""
+    id = models.PositiveSmallIntegerField(primary_key=True)

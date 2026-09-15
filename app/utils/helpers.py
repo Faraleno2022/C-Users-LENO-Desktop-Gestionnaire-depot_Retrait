@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.config import CURRENCY_SYMBOL, DATETIME_FMT
+from app.utils.accounting import number
 
 
 def now_iso() -> str:
@@ -62,7 +63,7 @@ def parse_money(text: str) -> float:
     cleaned = str(text).replace(" ", "").replace(CURRENCY_SYMBOL, "").replace(",", ".").strip()
     if not cleaned:
         raise ValueError("Montant vide")
-    value = float(cleaned)
+    value = number(cleaned)
     if value <= 0:
         raise ValueError("Le montant doit être strictement positif")
     return value

@@ -35,6 +35,8 @@ def transaction() -> Iterator[sqlite3.Connection]:
     """Contexte avec rollback automatique en cas d'erreur."""
     conn = get_connection()
     try:
+        # Réserver l'écriture avant de lire le stock et le solde.
+        conn.execute("BEGIN IMMEDIATE")
         yield conn
         conn.commit()
     except Exception:
@@ -50,6 +52,7 @@ def init_database() -> None:
         cur.execute(stmt)
     conn.commit()
     _apply_post_migrations(conn)
+    _allow_missing_agents(conn)
 
 
 def _apply_post_migrations(conn) -> None:
@@ -195,6 +198,35 @@ def _apply_post_migrations(conn) -> None:
             "INSERT INTO app_settings(key, value) VALUES ('mig_audit_sync_v1', '1')"
         )
         conn.commit()
+
+
+def _allow_missing_agents(conn):
+    """Migre les anciennes tables sans perdre leurs données, index ou séquences."""
+    import re
+    for table in ("transactions", "sales", "stock_movements"):
+        sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()[0]
+        if not re.search(r"agent_id\s+INTEGER\s+NOT\s+NULL", sql, re.I):
+            continue
+        indexes = [r[0] for r in conn.execute(
+            "SELECT sql FROM sqlite_master WHERE tbl_name=? AND type IN ('index','trigger') AND sql IS NOT NULL", (table,)
+        )]
+        sequence = conn.execute("SELECT seq FROM sqlite_sequence WHERE name=?", (table,)).fetchone()
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            replacement = table + "_nullable_agent"
+            create = sql.replace(table, replacement, 1)
+            create = re.sub(r"agent_id\s+INTEGER\s+NOT\s+NULL", "agent_id INTEGER", create, flags=re.I)
+            conn.execute(create)
+            columns = ", ".join('"' + r["name"] + '"' for r in conn.execute(f"PRAGMA table_info({table})"))
+            conn.execute(f"INSERT INTO {replacement} ({columns}) SELECT {columns} FROM {table}")
+            conn.execute(f"DROP TABLE {table}")
+            conn.execute(f"ALTER TABLE {replacement} RENAME TO {table}")
+            if sequence:
+                conn.execute("UPDATE sqlite_sequence SET seq=MAX(seq, ?) WHERE name=?", (sequence[0], table))
+            for index in indexes:
+                conn.execute(index)
+            conn.execute("DELETE FROM app_settings WHERE key IN (?, ?)",
+                         (f"pull_since_{table}", f"pull_since_{table}_uuid"))
 
 
 def close_connection() -> None:

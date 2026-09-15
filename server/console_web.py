@@ -25,14 +25,13 @@ import os
 import secrets as secrets_mod
 import sys
 import threading
-import time
 import webbrowser
 from pathlib import Path
 
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.25"
+APP_VERSION = "1.0.26"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -62,7 +61,18 @@ def _read_render_config(data_dir: Path) -> dict:
         return dict(RENDER_SYNC_TEMPLATE)
     try:
         raw = cfg_path.read_text(encoding="utf-8-sig")
-        return {**RENDER_SYNC_TEMPLATE, **json.loads(raw)}
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            return dict(RENDER_SYNC_TEMPLATE)
+        cfg = {**RENDER_SYNC_TEMPLATE, **value}
+        cfg["enabled"] = cfg["enabled"] is True
+        for key in ("url", "token"):
+            cfg[key] = cfg[key].strip() if isinstance(cfg[key], str) else ""
+        try:
+            cfg["interval_seconds"] = max(3, int(cfg["interval_seconds"]))
+        except (ValueError, TypeError, OverflowError):
+            cfg["interval_seconds"] = RENDER_SYNC_TEMPLATE["interval_seconds"]
+        return cfg
     except (OSError, ValueError):
         return dict(RENDER_SYNC_TEMPLATE)
 
@@ -113,19 +123,11 @@ def _replication_loop(data_dir: Path) -> None:
         url = (cfg.get("url") or "").strip()
         if cfg.get("enabled") and url and token and "COLLEZ-ICI" not in token:
             try:
-                if first_cycle:
-                    # Au premier cycle (démarrage), on oublie les filigranes de
-                    # pull pour re-télécharger TOUT le serveur : rattrape tout
-                    # décalage accumulé (filigrane bloqué). Les cycles suivants
-                    # restent incrémentaux (rapides).
-                    try:
-                        st = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
-                        st = {k: v for k, v in st.items() if not str(k).startswith("pull_")}
-                        state_path.write_text(json.dumps(st), encoding="utf-8")
-                    except (OSError, ValueError):
-                        pass
-                    first_cycle = False
                 rep = Replicator(url, token, state_path)
+                if first_cycle:
+                    rep.state = {k: v for k, v in rep.state.items() if not k.startswith("pull_")}
+                    rep._save_state()
+                    first_cycle = False
                 summary = rep.run_once()
                 if summary:
                     parts = ", ".join(

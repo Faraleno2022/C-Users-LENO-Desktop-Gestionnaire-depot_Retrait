@@ -1,5 +1,5 @@
 {% extends "web/base.html" %}
-{% load money %}
+{% load money l10n %}
 {% block title %}Retrait / Vente{% endblock %}
 
 {% block content %}
@@ -86,7 +86,7 @@
 
       <div class="mb-3">
         <label class="form-label">Montant total (GNF) <span class="text-danger">*</span></label>
-        <input type="number" step="1" min="1" name="montant" id="montant"
+        <input type="number" step="any" min="0.01" name="montant" id="montant"
                class="form-control form-control-lg fw-bold" required>
         <div class="form-text">
           Calculé depuis les produits, ou saisissez directement pour un retrait en espèces.
@@ -119,15 +119,15 @@
             <option value="">— Sélectionner —</option>
             {% for p in products %}
               <option value="{{ p.id }}"
-                      data-prix="{{ p.prix_unitaire|stringformat:'.0f' }}"
-                      data-stock="{{ p.quantite_stock|stringformat:'.0f' }}">
+                      data-prix="{{ p.prix_unitaire|unlocalize }}"
+                      data-stock="{{ p.quantite_stock|unlocalize }}">
                 {{ p.nom }} — {{ p.prix_unitaire|money }} (stock : {{ p.quantite_stock }})
               </option>
             {% endfor %}
           </select>
         </td>
         <td>
-          <input type="number" name="prod_qte" min="0" step="1" value="1"
+          <input type="number" name="prod_qte" min="0.01" step="any" value="1"
                  class="form-control form-control-sm prod-qte">
         </td>
         <td class="text-end prod-subtotal">—</td>
@@ -149,6 +149,8 @@
         var matInput = document.getElementById('matricule');
         var telInput = document.getElementById('telephone');
 
+        var hadProducts = false;
+        var balanceRequest = 0;
         var clientBalance = null;  // null = inconnu tant que le matricule n'est pas chargé
 
         function fmt(n) { return Math.round(n).toLocaleString('fr-FR').replace(/,/g, ' '); }
@@ -182,15 +184,17 @@
 
           var total;
           if (hasProduct) {
-            montant.value = grand > 0 ? Math.round(grand) : '';
+            montant.value = grand > 0 ? Number(grand.toPrecision(15)) : '';
             montant.readOnly = true;
             montant.classList.add('bg-light');
             total = grand;
           } else {
+            if (hadProducts) montant.value = '';
             montant.readOnly = false;
             montant.classList.remove('bg-light');
             total = parseFloat(montant.value) || 0;
           }
+          hadProducts = hasProduct;
           refreshBalanceBox(total);
         }
 
@@ -198,6 +202,7 @@
         var fetchTimer = null;
         var autoPhone = '';  // dernier téléphone rempli automatiquement
         function loadBalance() {
+          var requestId = ++balanceRequest;
           var mat = matInput.value.trim();
           if (!mat) {
             clientBalance = null;
@@ -211,6 +216,7 @@
           })
             .then(function (r) { return r.json(); })
             .then(function (d) {
+              if (requestId !== balanceRequest || matInput.value.trim() !== mat) return;
               clientBalance = d.balance;
               var nom = document.getElementById('balanceClientNom');
               nom.textContent = d.found ? (d.nom ? '· ' + d.nom : '') : '· (matricule inconnu)';
@@ -222,9 +228,15 @@
               }
               recompute();
             })
-            .catch(function () { clientBalance = null; recompute(); });
+            .catch(function () {
+              if (requestId !== balanceRequest) return;
+              clientBalance = null; recompute();
+            });
         }
         matInput.addEventListener('input', function () {
+          ++balanceRequest;
+          clientBalance = null;
+          recompute();
           clearTimeout(fetchTimer);
           fetchTimer = setTimeout(loadBalance, 350);
         });

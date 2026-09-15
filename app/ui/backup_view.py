@@ -507,9 +507,7 @@ class BackupView(QWidget):
         if not path:
             return
         try:
-            backup_service.create_backup(kind="manual", note="Export manuel")
-            import shutil
-            shutil.copy2(str(DB_PATH), path)
+            backup_service.export_database(Path(path))
         except Exception as e:
             error(self, "Erreur", str(e))
             return

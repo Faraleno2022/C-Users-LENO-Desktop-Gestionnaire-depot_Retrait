@@ -7,9 +7,10 @@ remontent par signaux (thread-safe via Qt.QueuedConnection).
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot, Qt
 
 from app.services import settings_service, sync_service
+from app.db.database import close_connection
 
 
 class SyncWorker(QObject):
@@ -21,10 +22,10 @@ class SyncWorker(QObject):
 
     @Slot()
     def run(self) -> None:
-        if not settings_service.is_sync_configured():
-            self.failed.emit("Synchronisation non configurée.")
-            return
         try:
+            if not settings_service.is_sync_configured():
+                self.failed.emit("Synchronisation non configurée.")
+                return
             result = sync_service.sync_all(
                 progress=lambda msg: self.progress.emit(msg)
             )
@@ -33,6 +34,8 @@ class SyncWorker(QObject):
             self.failed.emit(str(e))
         except Exception as e:  # pragma: no cover - garde-fou
             self.failed.emit(f"Erreur inattendue : {e}")
+        finally:
+            close_connection()
 
 
 class AutoSyncController(QObject):
@@ -67,13 +70,14 @@ class AutoSyncController(QObject):
         else:
             self._timer.stop()
 
-    def stop(self) -> None:
+    def stop(self) -> bool:
         self._timer.stop()
-        if self._thread is not None:
+        if self._thread is not None and self._thread.isRunning():
+            self._thread.requestInterruption()
             self._thread.quit()
-            self._thread.wait(2000)
-            self._thread = None
-            self._worker = None
+            if not self._thread.wait(2000):
+                return False
+        return True
 
     def trigger_now(self) -> bool:
         """Force un tick immédiat. Renvoie False si déjà en cours."""
@@ -103,27 +107,26 @@ class AutoSyncController(QObject):
         self._worker.progress.connect(self.progress)
         self._worker.finished.connect(self._on_worker_finished)
         self._worker.failed.connect(self._on_worker_failed)
-        self._worker.finished.connect(self._thread.quit)
-        self._worker.failed.connect(self._thread.quit)
+        self._worker.finished.connect(self._thread.quit, Qt.DirectConnection)
+        self._worker.finished.connect(self._worker.deleteLater)
+        self._worker.failed.connect(self._thread.quit, Qt.DirectConnection)
+        self._worker.failed.connect(self._worker.deleteLater)
         self._thread.finished.connect(self._cleanup_thread)
         self._thread.start()
         return True
 
     @Slot(dict)
     def _on_worker_finished(self, result: dict) -> None:
-        self._busy = False
         self.tick_finished.emit(result)
 
     @Slot(str)
     def _on_worker_failed(self, msg: str) -> None:
-        self._busy = False
         self.tick_failed.emit(msg)
 
     @Slot()
     def _cleanup_thread(self) -> None:
-        if self._worker is not None:
-            self._worker.deleteLater()
-            self._worker = None
+        self._busy = False
+        self._worker = None
         if self._thread is not None:
             self._thread.deleteLater()
             self._thread = None

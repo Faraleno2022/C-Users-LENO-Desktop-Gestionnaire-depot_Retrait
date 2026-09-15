@@ -276,7 +276,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         try:
-            self.auto_sync.stop()
+            if not self.auto_sync.stop():
+                self.statusBar().showMessage("Fin de synchronisation en cours. Réessayez de fermer dans quelques instants.", 6000)
+                event.ignore()
+                return
         except Exception:
             pass
         super().closeEvent(event)
@@ -341,6 +344,9 @@ class MainWindow(QMainWindow):
                 if key == "dashboard":
                     self.nav.setCurrentRow(i)
                     break
+            return
+        if not self.auto_sync.stop():
+            QMessageBox.information(self, "Synchronisation", "Une synchronisation se termine. Réessayez la déconnexion dans quelques instants.")
             return
         auth_service.logout()
         self.close()
