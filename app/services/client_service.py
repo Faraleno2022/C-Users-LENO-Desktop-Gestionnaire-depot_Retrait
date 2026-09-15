@@ -109,6 +109,7 @@ def create_client(
     return get_client(client_id)
 
 
+@db_transaction()
 def update_client(
     client_id: int,
     nom: Optional[str] = None,
@@ -129,6 +130,13 @@ def update_client(
         existing = get_client_by_matricule(new_mat, include_inactive=True)
         if existing is not None and existing.id != client_id:
             raise ClientError(f"Le matricule « {new_mat} » est déjà utilisé.")
+        if new_mat != client.matricule:
+            used = get_connection().execute(
+                "SELECT 1 FROM transactions WHERE matricule=? UNION ALL SELECT 1 FROM sales WHERE matricule=? LIMIT 1",
+                (client.matricule, client.matricule),
+            ).fetchone()
+            if used:
+                raise ClientError("Le matricule d'un client ayant des opérations ne peut pas être modifié.")
         fields.append("matricule = ?")
         params.append(new_mat)
     if nom is not None:
@@ -195,7 +203,7 @@ def _known_matricules() -> List[str]:
     """Tous les matricules présents en base (fiches + transactions + ventes)."""
     conn = get_connection()
     rows = conn.execute(
-        """SELECT matricule FROM clients
+        """SELECT matricule FROM clients WHERE actif = 1
            UNION SELECT matricule FROM transactions WHERE deleted = 0
            UNION SELECT matricule FROM sales WHERE deleted = 0"""
     ).fetchall()

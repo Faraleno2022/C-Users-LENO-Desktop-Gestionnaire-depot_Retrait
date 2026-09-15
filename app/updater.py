@@ -15,6 +15,7 @@ l'installateur ne remplace que le programme.
 from __future__ import annotations
 
 import json
+import hashlib
 import urllib.request
 from pathlib import Path
 
@@ -84,6 +85,50 @@ def _find_installer_asset(release: dict) -> dict | None:
     return None
 
 
+def _download_asset(asset: dict, data_dir: Path) -> Path:
+    """Ne publie que les téléchargements complets, vérifiés avant leur activation."""
+    name = asset["name"]
+    if not isinstance(name, str) or any(c in name for c in '/\\<>:"|?*\r\n') or not name.lower().endswith(".exe"):
+        raise ValueError("Nom d'installateur invalide.")
+    updates = Path(data_dir) / UPDATES_DIR
+    updates.mkdir(parents=True, exist_ok=True)
+    target = updates / name
+    expected = int(asset.get("size") or 0)
+    digest = asset.get("digest") or ""
+
+    def valid(path):
+        if not path.is_file() or path.stat().st_size <= 0:
+            return False
+        if expected and path.stat().st_size != expected:
+            return False
+        if digest.startswith("sha256:"):
+            checksum = hashlib.sha256()
+            with path.open("rb") as source:
+                for chunk in iter(lambda: source.read(65536), b""):
+                    checksum.update(chunk)
+            return checksum.hexdigest() == digest.split(":", 1)[1].lower()
+        return bool(expected)
+
+    if valid(target):
+        return target
+    tmp = target.with_suffix(".part")
+    request = urllib.request.Request(asset["browser_download_url"], headers={"User-Agent": "EMAB-Updater"})
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response, tmp.open("wb") as out:
+            while True:
+                chunk = response.read(65536)
+                if not chunk:
+                    break
+                out.write(chunk)
+        if not valid(tmp):
+            raise ValueError("Téléchargement incomplet ou empreinte incorrecte.")
+        tmp.replace(target)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    return target
+
+
 def check_and_prepare_update(current_version: str, data_dir: Path) -> str | None:
     """Télécharge l'installateur si une version desktop plus récente existe.
 
@@ -101,24 +146,7 @@ def check_and_prepare_update(current_version: str, data_dir: Path) -> str | None
         if asset is None:
             return None
 
-        updates_dir = Path(data_dir) / UPDATES_DIR
-        updates_dir.mkdir(parents=True, exist_ok=True)
-        target = updates_dir / asset["name"]
-
-        expected = asset.get("size") or 0
-        if not (target.exists() and expected and target.stat().st_size == expected):
-            req = urllib.request.Request(
-                asset["browser_download_url"],
-                headers={"User-Agent": "EMAB-Gestionnaire-Updater"},
-            )
-            tmp = target.with_suffix(".part")
-            with urllib.request.urlopen(req, timeout=120) as resp, open(tmp, "wb") as out:
-                while True:
-                    chunk = resp.read(65536)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-            tmp.replace(target)
+        target = _download_asset(asset, data_dir)
 
         flag = Path(data_dir) / FLAG_NAME
         flag.write_text(str(target), encoding="utf-8")

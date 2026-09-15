@@ -10,6 +10,7 @@ from app.models.transaction import Transaction
 from app.models.user import User
 from app.services import audit_service, auth_service
 from app.utils.helpers import new_uuid, now_iso
+from app.utils.accounting import add, subtract, number
 
 
 class TransactionError(Exception):
@@ -18,44 +19,29 @@ class TransactionError(Exception):
 
 # --- Soldes ------------------------------------------------------------------
 
-def _sales_total(matricule: Optional[str] = None) -> float:
-    """Somme des achats (ventes de produits) qui décomptent le solde."""
+def _balance(matricule: Optional[str] = None) -> float:
     conn = get_connection()
-    if matricule is None:
-        row = conn.execute(
-            "SELECT COALESCE(SUM(montant_total), 0) AS s FROM sales WHERE deleted = 0"
-        ).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT COALESCE(SUM(montant_total), 0) AS s FROM sales WHERE deleted = 0 AND matricule = ?",
-            (matricule,),
-        ).fetchone()
-    return float(row["s"])
+    clause = " AND matricule = ?" if matricule is not None else ""
+    params = (matricule,) if matricule is not None else ()
+    tx = conn.execute(
+        "SELECT type, montant FROM transactions WHERE deleted = 0" + clause, params
+    ).fetchall()
+    sales = conn.execute(
+        "SELECT montant_total FROM sales WHERE deleted = 0" + clause, params
+    ).fetchall()
+    return add(
+        *(r["montant"] if r["type"] == "depot" else -r["montant"] for r in tx),
+        *(-r["montant_total"] for r in sales),
+    )
 
 
 def get_global_balance() -> float:
-    """Solde global = dépôts - retraits - achats (non supprimés)."""
-    conn = get_connection()
-    row = conn.execute(
-        """SELECT
-              COALESCE(SUM(CASE WHEN type = 'depot' THEN montant ELSE 0 END), 0) AS deposits,
-              COALESCE(SUM(CASE WHEN type = 'retrait' THEN montant ELSE 0 END), 0) AS withdrawals
-           FROM transactions WHERE deleted = 0"""
-    ).fetchone()
-    return float(row["deposits"]) - float(row["withdrawals"]) - _sales_total()
+    """Dépôts moins retraits et achats actifs, sans résidu de calcul binaire."""
+    return _balance()
 
 
 def get_matricule_balance(matricule: str) -> float:
-    """Solde d'un matricule = dépôts - retraits - achats."""
-    conn = get_connection()
-    row = conn.execute(
-        """SELECT
-              COALESCE(SUM(CASE WHEN type = 'depot' THEN montant ELSE 0 END), 0) AS deposits,
-              COALESCE(SUM(CASE WHEN type = 'retrait' THEN montant ELSE 0 END), 0) AS withdrawals
-           FROM transactions WHERE deleted = 0 AND matricule = ?""",
-        (matricule,),
-    ).fetchone()
-    return float(row["deposits"]) - float(row["withdrawals"]) - _sales_total(matricule)
+    return _balance(matricule.strip())
 
 
 # --- Création ----------------------------------------------------------------
@@ -74,7 +60,11 @@ def create_transaction(
         raise TransactionError("Le matricule est obligatoire.")
     if type_ not in ("depot", "retrait"):
         raise TransactionError("Type d'opération invalide.")
-    if montant is None or montant <= 0:
+    try:
+        montant = number(montant)
+    except (ValueError, TypeError):
+        raise TransactionError("Le montant doit être un nombre fini strictement positif.")
+    if montant <= 0:
         raise TransactionError("Le montant doit être strictement positif.")
     if agent is None:
         raise TransactionError("Agent non identifié.")
@@ -82,13 +72,13 @@ def create_transaction(
     with db_transaction() as conn:
         current = get_matricule_balance(matricule)
         if type_ == "depot":
-            new_balance = current + montant
+            new_balance = add(current, montant)
         else:
             if montant > current:
                 raise TransactionError(
                     f"Solde insuffisant pour ce matricule. Solde disponible : {current:.0f}"
                 )
-            new_balance = current - montant
+            new_balance = subtract(current, montant)
 
         cur = conn.execute(
             """INSERT INTO transactions
@@ -131,15 +121,18 @@ def get_transaction(tx_id: int) -> Optional[Transaction]:
 
 def delete_transaction(tx_id: int) -> None:
     """Suppression logique (réservée admins)."""
-    tx = get_transaction(tx_id)
-    if tx is None:
-        raise TransactionError("Transaction introuvable.")
-    conn = get_connection()
-    conn.execute(
-        "UPDATE transactions SET deleted = 1, sync_status = 'pending' WHERE id = ?",
-        (tx_id,),
-    )
-    conn.commit()
+    with db_transaction() as conn:
+        tx = get_transaction(tx_id)
+        if tx is None:
+            raise TransactionError("Transaction introuvable.")
+        if tx.deleted:
+            return
+        if tx.type == "depot" and tx.montant > get_matricule_balance(tx.matricule):
+            raise TransactionError("Ce dépôt a déjà été utilisé : son annulation rendrait le solde négatif.")
+        conn.execute(
+            "UPDATE transactions SET deleted = 1, sync_status = 'pending' WHERE id = ?",
+            (tx_id,),
+        )
     actor = auth_service.current_user()
     audit_service.log_action(
         actor.id if actor else None,

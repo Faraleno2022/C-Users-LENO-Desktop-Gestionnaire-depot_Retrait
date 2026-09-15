@@ -49,6 +49,7 @@ def _apply_pending_update() -> bool:
             f'taskkill /IM "{exe_name}" /F >nul 2>&1\r\n'
             "ping 127.0.0.1 -n 2 >nul\r\n"
             f'"{installer}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n'
+            "if errorlevel 1 exit /b 1\r\n"
             f'del "{installer}" >nul 2>&1\r\n'
             f'del "{flag}" >nul 2>&1\r\n'
             f'start "" "{exe}"\r\n'

@@ -6,6 +6,7 @@ Réplique fonctionnelle de `app/services/report_service.py` (côté poste) et
 from __future__ import annotations
 
 import io
+from html import escape
 from datetime import date, datetime, timedelta
 from typing import List, Optional, Sequence, Tuple
 
@@ -213,6 +214,10 @@ def build_excel(title: str, headers: Sequence[str], rows: Sequence[Sequence]) ->
         cell.alignment = Alignment(horizontal="center")
     for row in rows:
         ws.append(list(row))
+    for cells in ws.iter_rows():
+        for cell in cells:
+            if cell.data_type == "f":
+                cell.data_type = "s"
     for col_idx, _ in enumerate(headers, start=1):
         max_len = 12
         for cell in ws.iter_cols(min_col=col_idx, max_col=col_idx, values_only=True).__next__():
@@ -234,9 +239,9 @@ def build_pdf(title: str, headers: Sequence[str], rows: Sequence[Sequence], subt
         topMargin=15 * mm, bottomMargin=15 * mm,
     )
     styles = getSampleStyleSheet()
-    story = [Paragraph(f"<b>{title}</b>", styles["Title"])]
+    story = [Paragraph(f"<b>{escape(title)}</b>", styles["Title"])]
     if subtitle:
-        story.append(Paragraph(subtitle, styles["Normal"]))
+        story.append(Paragraph(escape(subtitle), styles["Normal"]))
     story.append(Spacer(1, 6 * mm))
 
     data = [list(headers)] + [list(map(_pdf_cell, row)) for row in rows]

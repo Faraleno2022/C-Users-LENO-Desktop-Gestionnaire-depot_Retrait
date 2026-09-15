@@ -11,6 +11,7 @@ from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Count, F, Q, Sum
 from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -22,6 +23,8 @@ from sync.models import (
     StockMovement, Transaction,
 )
 from web import reports as web_reports
+from web.accounting import add, subtract, multiply, number
+from web.operations import operation_transaction
 from web.reports import build_excel, build_pdf, _fmt_money, _fmt_num
 
 
@@ -81,10 +84,13 @@ def _can_delete(remote) -> bool:
     remote = remote or {}
     if remote.get("role") in ("super_admin", "admin"):
         return True
+    if remote.get("uuid"):
+        u = RemoteUser.objects.filter(uuid=remote["uuid"], actif=True).first()
+        return bool(u and u.can_delete)
     ident = remote.get("identifiant")
     if ident:
-        u = RemoteUser.objects.filter(identifiant=ident).order_by("-id").first()
-        if u and getattr(u, "can_delete", False):
+        u = RemoteUser.objects.filter(identifiant=ident, actif=True).order_by("-id").first()
+        if u and u.can_delete:
             return True
     return False
 
@@ -124,10 +130,9 @@ def _log_audit(request, action: str, target_type: str = "", target_id: str = "",
     r = request.session.get("remote_user") or {}
     AuditLog.objects.create(
         uuid=str(uuid_mod.uuid4()),
-        user_uuid=r.get("identifiant") and (
-            # Récupère le vrai uuid via lookup ; fallback ""
-            (RemoteUser.objects.filter(identifiant=r.get("identifiant")).values_list("uuid", flat=True).first() or "")
-        ) or "",
+        user_uuid=r.get("uuid") or (
+            (agent.uuid if (agent := _current_remote_user(request)) else "")
+        ),
         user_identifiant=r.get("identifiant") or "",
         action=f"web.{action}",
         target_type=target_type or "",
@@ -140,7 +145,7 @@ def _log_audit(request, action: str, target_type: str = "", target_id: str = "",
     # attendre le prochain cycle. No-op sur le serveur en ligne (Render).
     try:
         from sync.livesync import request_sync
-        request_sync()
+        transaction.on_commit(request_sync)
     except Exception:
         pass
 
@@ -189,9 +194,12 @@ def _dashboard_stats() -> dict:
     tx = Transaction.objects.filter(deleted=False)
     depots = tx.filter(type="depot").aggregate(s=Sum("montant"))["s"] or 0
     retraits = tx.filter(type="retrait").aggregate(s=Sum("montant"))["s"] or 0
-    ventes_all = Sale.objects.filter(deleted=False).aggregate(s=Sum("montant_total"))["s"] or 0
     # Solde global = dépôts − retraits − ventes (cohérent avec le solde par client).
-    solde = float(depots) - float(retraits) - float(ventes_all)
+    solde = add(
+        *(amount if kind == "depot" else -amount
+          for kind, amount in Transaction.objects.filter(deleted=False).values_list("type", "montant")),
+        *(-amount for amount in Sale.objects.filter(deleted=False).values_list("montant_total", flat=True)),
+    )
 
     today_from, today_to = _today_range()
     tx_today = tx.filter(created_at__gte=today_from, created_at__lte=today_to)
@@ -336,11 +344,12 @@ def _paginate(request, qs, per_page=PAGE_SIZE):
 
 def _matricule_balance(matricule: str) -> float:
     """Solde courant côté serveur pour un matricule."""
-    tx = Transaction.objects.filter(matricule=matricule, deleted=False)
-    depots = tx.filter(type="depot").aggregate(s=Sum("montant"))["s"] or 0
-    retraits = tx.filter(type="retrait").aggregate(s=Sum("montant"))["s"] or 0
-    ventes = Sale.objects.filter(matricule=matricule, deleted=False).aggregate(s=Sum("montant_total"))["s"] or 0
-    return float(depots) - float(retraits) - float(ventes)
+    tx = Transaction.objects.filter(matricule=matricule.strip(), deleted=False)
+    sales = Sale.objects.filter(matricule=matricule.strip(), deleted=False)
+    return add(
+        *(amount if kind == "depot" else -amount for kind, amount in tx.values_list("type", "montant")),
+        *(-amount for amount in sales.values_list("montant_total", flat=True)),
+    )
 
 
 def _normalize_name(s: str) -> str:
@@ -373,62 +382,63 @@ def deposit_new(request):
 
     if request.method == "POST":
         try:
-            matricule = (request.POST.get("matricule") or "").strip()
-            if not matricule:
-                raise ValueError("Le matricule est obligatoire.")
-            telephone = (request.POST.get("telephone") or "").strip()
-            note = (request.POST.get("note") or "").strip()
-            montant_raw = (request.POST.get("montant") or "").strip().replace(" ", "")
-            montant = float(montant_raw)
-            if montant <= 0:
-                raise ValueError("Le montant doit être strictement positif.")
+            with operation_transaction():
+                matricule = _limit((request.POST.get("matricule") or "").strip(), 80, "matricule")
+                if not matricule:
+                    raise ValueError("Le matricule est obligatoire.")
+                telephone = _limit((request.POST.get("telephone") or "").strip(), 40, "telephone")
+                note = _limit((request.POST.get("note") or "").strip(), 255, "note")
+                montant_raw = (request.POST.get("montant") or "").strip().replace(" ", "")
+                montant = number(montant_raw)
+                if montant <= 0:
+                    raise ValueError("Le montant doit être strictement positif.")
 
-            # Solde après opération côté serveur (snapshot à l'instant t).
-            current = _matricule_balance(matricule)
-            new_balance = current + montant
+                # Solde après opération côté serveur (snapshot à l'instant t).
+                current = _matricule_balance(matricule)
+                new_balance = add(current, montant)
 
-            # Retrouve le RemoteUser courant (par identifiant en session) pour
-            # alimenter agent_uuid/agent_id/agent_nom.
-            agent = None
-            ident = r.get("identifiant")
-            if ident:
-                agent = RemoteUser.objects.filter(identifiant=ident).order_by("-id").first()
+                # Retrouve le RemoteUser courant (par identifiant en session) pour
+                # alimenter agent_uuid/agent_id/agent_nom.
+                agent = None
+                ident = r.get("identifiant")
+                if ident:
+                    agent = _current_remote_user(request)
 
-            tx = Transaction.objects.create(
-                uuid=str(uuid_mod.uuid4()),
-                matricule=matricule,
-                telephone=telephone,
-                type="depot",
-                montant=montant,
-                solde_apres=new_balance,
-                agent_id=(agent.id if agent else None),
-                agent_uuid=(agent.uuid if agent else ""),
-                agent_nom=(agent.nom_complet if agent else r.get("nom_complet") or ""),
-                note=note,
-                created_at=_iso_now(),
-                deleted=False,
-            )
-            _log_audit(
-                request, "depot_create", target_type="transaction", target_id=tx.uuid,
-                details=f"matricule={matricule} montant={montant:.0f} solde_apres={new_balance:.0f}",
-            )
-            messages.success(
-                request,
-                f"Dépôt de {montant:,.0f} GNF enregistré pour {matricule}. "
-                f"Nouveau solde : {new_balance:,.0f} GNF.",
-            )
-            last_receipt = {
-                "id": tx.id,
-                "matricule": matricule,
-                "telephone": telephone,
-                "montant": montant,
-                "solde_apres": new_balance,
-                "created_at": tx.created_at,
-                "agent_nom": tx.agent_nom,
-            }
-            # On vide le formulaire en redirigeant (PRG pattern).
-            request.session["last_deposit"] = last_receipt
-            return redirect("web:deposit_new")
+                tx = Transaction.objects.create(
+                    uuid=str(uuid_mod.uuid4()),
+                    matricule=matricule,
+                    telephone=telephone,
+                    type="depot",
+                    montant=montant,
+                    solde_apres=new_balance,
+                    agent_id=(agent.id if agent else None),
+                    agent_uuid=(agent.uuid if agent else ""),
+                    agent_nom=(agent.nom_complet if agent else r.get("nom_complet") or ""),
+                    note=note,
+                    created_at=_iso_now(),
+                    deleted=False,
+                )
+                _log_audit(
+                    request, "depot_create", target_type="transaction", target_id=tx.uuid,
+                    details=f"matricule={matricule} montant={montant:.0f} solde_apres={new_balance:.0f}",
+                )
+                messages.success(
+                    request,
+                    f"Dépôt de {montant:,.0f} GNF enregistré pour {matricule}. "
+                    f"Nouveau solde : {new_balance:,.0f} GNF.",
+                )
+                last_receipt = {
+                    "id": tx.id,
+                    "matricule": matricule,
+                    "telephone": telephone,
+                    "montant": montant,
+                    "solde_apres": new_balance,
+                    "created_at": tx.created_at,
+                    "agent_nom": tx.agent_nom,
+                }
+                # On vide le formulaire en redirigeant (PRG pattern).
+                request.session["last_deposit"] = last_receipt
+                return redirect("web:deposit_new")
         except (ValueError, TypeError) as e:
             error = str(e)
 
@@ -464,164 +474,172 @@ def withdrawal_new(request):
 
     if request.method == "POST":
         try:
-            matricule = (request.POST.get("matricule") or "").strip()
-            if not matricule:
-                raise ValueError("Le matricule est obligatoire.")
-            telephone = (request.POST.get("telephone") or "").strip()
-            note = (request.POST.get("note") or "").strip()
-            confirmed = request.POST.get("confirmed") == "1"
-            if not confirmed:
-                raise ValueError(
-                    "Vous devez confirmer avoir vérifié le solde réel avec le poste "
-                    "avant de valider un retrait en ligne."
-                )
-
-            # --- Lignes de produits (optionnelles) ---
-            # Les champs prod_id / prod_qte sont envoyés en tableaux parallèles.
-            prod_ids = request.POST.getlist("prod_id")
-            prod_qtes = request.POST.getlist("prod_qte")
-            lines = []           # données affichables sur la fiche
-            products_total = 0.0
-            for pid, q in zip(prod_ids, prod_qtes):
-                pid = (pid or "").strip()
-                q = (q or "").strip().replace(" ", "")
-                if not pid:
-                    continue
-                quantite = float(q or 0)
-                if quantite <= 0:
-                    continue
-                product = Product.objects.filter(pk=int(pid), actif=True).first()
-                if product is None:
-                    raise ValueError("Un produit sélectionné est invalide ou inactif.")
-                stock = float(product.quantite_stock or 0)
-                if quantite > stock:
+            with operation_transaction():
+                matricule = _limit((request.POST.get("matricule") or "").strip(), 80, "matricule")
+                if not matricule:
+                    raise ValueError("Le matricule est obligatoire.")
+                telephone = _limit((request.POST.get("telephone") or "").strip(), 40, "telephone")
+                note = _limit((request.POST.get("note") or "").strip(), 255, "note")
+                confirmed = request.POST.get("confirmed") == "1"
+                if not confirmed:
                     raise ValueError(
-                        f"Stock insuffisant pour « {product.nom} » : "
-                        f"{stock:g} disponible, {quantite:g} demandé."
+                        "Vous devez confirmer avoir vérifié le solde réel avec le poste "
+                        "avant de valider un retrait en ligne."
                     )
-                prix = float(product.prix_unitaire or 0)
-                line_total = prix * quantite
-                products_total += line_total
-                lines.append({
-                    "product": product, "product_nom": product.nom,
-                    "quantite": quantite, "prix": prix, "total": line_total,
-                })
 
-            # Montant global : piloté par les produits si présents, sinon saisie manuelle.
-            montant_raw = (request.POST.get("montant") or "").strip().replace(" ", "")
-            manual_montant = float(montant_raw) if montant_raw else 0.0
-            montant = products_total if lines else manual_montant
-            if montant <= 0:
-                raise ValueError(
-                    "Ajoutez au moins un produit ou saisissez un montant positif."
-                )
+                # --- Lignes de produits (optionnelles) ---
+                # Les champs prod_id / prod_qte sont envoyés en tableaux parallèles.
+                prod_ids = request.POST.getlist("prod_id")
+                prod_qtes = request.POST.getlist("prod_qte")
+                if len(prod_ids) != len(prod_qtes):
+                    raise ValueError("Les lignes de produits sont incomplètes.")
+                quantities = {}
+                for pid, q in zip(prod_ids, prod_qtes):
+                    pid = (pid or "").strip()
+                    if not pid:
+                        continue
+                    quantite = number(q)
+                    if quantite <= 0:
+                        raise ValueError("La quantité d'un produit doit être strictement positive.")
+                    pid = int(pid)
+                    quantities[pid] = add(quantities.get(pid, 0), quantite)
+                lines = []           # données affichables sur la fiche
+                products_total = 0.0
+                for pid, quantite in sorted(quantities.items()):
+                    product = Product.objects.select_for_update().filter(pk=pid, actif=True).first()
+                    if product is None:
+                        raise ValueError("Un produit sélectionné est invalide ou inactif.")
+                    stock = float(product.quantite_stock or 0)
+                    if quantite > stock:
+                        raise ValueError(
+                            f"Stock insuffisant pour « {product.nom} » : "
+                            f"{stock:g} disponible, {quantite:g} demandé."
+                        )
+                    prix = number(product.prix_unitaire or 0)
+                    if prix < 0:
+                        raise ValueError("Le prix du produit ne peut pas être négatif.")
+                    line_total = multiply(prix, quantite)
+                    products_total = add(products_total, line_total)
+                    lines.append({
+                        "product": product, "product_nom": product.nom,
+                        "quantite": quantite, "prix": prix, "total": line_total,
+                    })
 
-            current = _matricule_balance(matricule)
-            if montant > current:
-                raise ValueError(
-                    f"Solde insuffisant côté serveur : disponible {current:.0f} GNF, "
-                    f"demande {montant:.0f} GNF."
-                )
-            new_balance = current - montant
+                # Montant global : piloté par les produits si présents, sinon saisie manuelle.
+                montant_raw = (request.POST.get("montant") or "").strip().replace(" ", "")
+                manual_montant = number(montant_raw) if montant_raw and not lines else 0.0
+                montant = products_total if lines else manual_montant
+                if montant <= 0:
+                    raise ValueError(
+                        "Ajoutez au moins un produit ou saisissez un montant positif."
+                    )
 
-            agent = None
-            ident = r.get("identifiant")
-            if ident:
-                agent = RemoteUser.objects.filter(identifiant=ident).order_by("-id").first()
-            agent_id = agent.id if agent else None
-            agent_uuid = agent.uuid if agent else ""
-            agent_nom = agent.nom_complet if agent else (r.get("nom_complet") or "")
+                current = _matricule_balance(matricule)
+                if montant > current:
+                    raise ValueError(
+                        f"Solde insuffisant côté serveur : disponible {current:.0f} GNF, "
+                        f"demande {montant:.0f} GNF."
+                    )
+                new_balance = subtract(current, montant)
 
-            # Note enrichie avec le détail des produits.
-            detail = ", ".join(f"{l['product_nom']} x{l['quantite']:g}" for l in lines)
-            note_full = note
-            if detail:
-                note_full = (f"{note} | " if note else "") + f"Produits: {detail}"
+                agent = None
+                ident = r.get("identifiant")
+                if ident:
+                    agent = _current_remote_user(request)
+                agent_id = agent.id if agent else None
+                agent_uuid = agent.uuid if agent else ""
+                agent_nom = agent.nom_complet if agent else (r.get("nom_complet") or "")
 
-            # Avec produits : on enregistre une VENTE par produit (débit du
-            # solde + décrément du stock). Ces ventes apparaissent dans /ventes/
-            # et sont annulables — l'annulation rétablit le stock et le solde.
-            # Sans produit : c'est un retrait d'espèces (transaction retrait).
-            if lines:
-                running = current
-                first_id = None
-                for l in lines:
-                    product = l["product"]
-                    running -= l["total"]
-                    new_stock = float(product.quantite_stock or 0) - l["quantite"]
-                    sale = Sale.objects.create(
+                # Note enrichie avec le détail des produits.
+                detail = ", ".join(f"{l['product_nom']} x{l['quantite']:g}" for l in lines)
+                note_full = note
+                if detail:
+                    note_full = (f"{note} | " if note else "") + f"Produits: {detail}"
+
+                # Avec produits : on enregistre une VENTE par produit (débit du
+                # solde + décrément du stock). Ces ventes apparaissent dans /ventes/
+                # et sont annulables — l'annulation rétablit le stock et le solde.
+                # Sans produit : c'est un retrait d'espèces (transaction retrait).
+                if lines:
+                    running = current
+                    first_id = None
+                    for l in lines:
+                        product = l["product"]
+                        running = subtract(running, l["total"])
+                        new_stock = subtract(product.quantite_stock or 0, l["quantite"])
+                        sale = Sale.objects.create(
+                            uuid=str(uuid_mod.uuid4()),
+                            matricule=matricule, telephone=telephone,
+                            product_id=product.id, product_uuid=product.uuid,
+                            product_nom=product.nom,
+                            quantite=l["quantite"], prix_unitaire=l["prix"],
+                            montant_total=l["total"], solde_apres=running,
+                            agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
+                            note=note, created_at=_iso_now(), deleted=False,
+                        )
+                        product.quantite_stock = new_stock
+                        product.updated_at = _iso_now()
+                        product.save()
+                        StockMovement.objects.create(
+                            uuid=str(uuid_mod.uuid4()),
+                            product_id=product.id, product_uuid=product.uuid,
+                            product_nom=product.nom,
+                            type="sortie", quantite=l["quantite"], stock_apres=new_stock,
+                            motif=f"Vente {matricule}", sale_id=sale.id,
+                            agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
+                            created_at=_iso_now(),
+                        )
+                        if first_id is None:
+                            first_id = sale.id
+                    _log_audit(
+                        request, "sale_create", target_type="sale",
+                        target_id=str(first_id or ""),
+                        details=f"matricule={matricule} montant={montant:.0f} "
+                                f"solde_apres={new_balance:.0f} produits=[{detail}]",
+                    )
+                    messages.success(
+                        request,
+                        f"Vente de {montant:,.0f} GNF enregistrée pour {matricule}. "
+                        f"Nouveau solde : {new_balance:,.0f} GNF.",
+                    )
+                    receipt_id, receipt_at = first_id, _iso_now()
+                else:
+                    tx = Transaction.objects.create(
                         uuid=str(uuid_mod.uuid4()),
-                        matricule=matricule, telephone=telephone,
-                        product_id=product.id, product_uuid=product.uuid,
-                        product_nom=product.nom,
-                        quantite=l["quantite"], prix_unitaire=l["prix"],
-                        montant_total=l["total"], solde_apres=running,
+                        matricule=matricule, telephone=telephone, type="retrait",
+                        montant=montant, solde_apres=new_balance,
                         agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
-                        note=note, created_at=_iso_now(), deleted=False,
+                        note=note_full, created_at=_iso_now(), deleted=False,
                     )
-                    product.quantite_stock = new_stock
-                    product.updated_at = _iso_now()
-                    product.save()
-                    StockMovement.objects.create(
-                        uuid=str(uuid_mod.uuid4()),
-                        product_id=product.id, product_uuid=product.uuid,
-                        product_nom=product.nom,
-                        type="sortie", quantite=l["quantite"], stock_apres=new_stock,
-                        motif=f"Vente {matricule}", sale_id=sale.id,
-                        agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
-                        created_at=_iso_now(),
+                    _log_audit(
+                        request, "retrait_create", target_type="transaction", target_id=tx.uuid,
+                        details=f"matricule={matricule} montant={montant:.0f} "
+                                f"solde_apres={new_balance:.0f}",
                     )
-                    if first_id is None:
-                        first_id = sale.id
-                _log_audit(
-                    request, "sale_create", target_type="sale",
-                    target_id=str(first_id or ""),
-                    details=f"matricule={matricule} montant={montant:.0f} "
-                            f"solde_apres={new_balance:.0f} produits=[{detail}]",
-                )
-                messages.success(
-                    request,
-                    f"Vente de {montant:,.0f} GNF enregistrée pour {matricule}. "
-                    f"Nouveau solde : {new_balance:,.0f} GNF.",
-                )
-                receipt_id, receipt_at = first_id, _iso_now()
-            else:
-                tx = Transaction.objects.create(
-                    uuid=str(uuid_mod.uuid4()),
-                    matricule=matricule, telephone=telephone, type="retrait",
-                    montant=montant, solde_apres=new_balance,
-                    agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
-                    note=note_full, created_at=_iso_now(), deleted=False,
-                )
-                _log_audit(
-                    request, "retrait_create", target_type="transaction", target_id=tx.uuid,
-                    details=f"matricule={matricule} montant={montant:.0f} "
-                            f"solde_apres={new_balance:.0f}",
-                )
-                messages.success(
-                    request,
-                    f"Retrait de {montant:,.0f} GNF enregistré pour {matricule}. "
-                    f"Nouveau solde : {new_balance:,.0f} GNF.",
-                )
-                receipt_id, receipt_at = tx.id, tx.created_at
+                    messages.success(
+                        request,
+                        f"Retrait de {montant:,.0f} GNF enregistré pour {matricule}. "
+                        f"Nouveau solde : {new_balance:,.0f} GNF.",
+                    )
+                    receipt_id, receipt_at = tx.id, tx.created_at
 
-            request.session["last_withdrawal"] = {
-                "id": receipt_id,
-                "matricule": matricule,
-                "telephone": telephone,
-                "montant": montant,
-                "solde_avant": current,
-                "solde_apres": new_balance,
-                "created_at": receipt_at,
-                "agent_nom": agent_nom,
-                "is_sale": bool(lines),
-                "lines": [
-                    {"product_nom": l["product_nom"], "quantite": l["quantite"],
-                     "prix": l["prix"], "total": l["total"]}
-                    for l in lines
-                ],
-            }
-            return redirect("web:withdrawal_new")
+                request.session["last_withdrawal"] = {
+                    "id": receipt_id,
+                    "matricule": matricule,
+                    "telephone": telephone,
+                    "montant": montant,
+                    "solde_avant": current,
+                    "solde_apres": new_balance,
+                    "created_at": receipt_at,
+                    "agent_nom": agent_nom,
+                    "is_sale": bool(lines),
+                    "lines": [
+                        {"product_nom": l["product_nom"], "quantite": l["quantite"],
+                         "prix": l["prix"], "total": l["total"]}
+                        for l in lines
+                    ],
+                }
+                return redirect("web:withdrawal_new")
         except (ValueError, TypeError) as e:
             error = str(e)
 
@@ -714,10 +732,10 @@ def print_ticket(request):
     montant = float(data.get("montant") or 0)
     solde_apres = float(data.get("solde_apres") or 0)
     if kind == "depot":
-        solde_avant = solde_apres - montant
+        solde_avant = subtract(solde_apres, montant)
         titre, signe = "REÇU DE DÉPÔT", "+"
     else:
-        solde_avant = float(data.get("solde_avant", solde_apres + montant))
+        solde_avant = float(data.get("solde_avant", add(solde_apres, montant)))
         titre = "FACTURE DE VENTE" if data.get("is_sale") else "REÇU DE RETRAIT"
         signe = "−"
 
@@ -919,54 +937,69 @@ def product_new(request):
     error = None
     if request.method == "POST":
         try:
-            nom = _limit((request.POST.get("nom") or "").strip(), 200, "Nom du produit")
-            if not nom:
-                raise ValueError("Le nom est obligatoire.")
-            reference = _limit((request.POST.get("reference") or "").strip(), 80, "Référence")
-            # Anti-doublon : refuse un nom déjà utilisé (insensible à la casse et
-            # aux espaces) ou une référence déjà prise, sauf si on force.
-            force = request.POST.get("force_create") == "1"
-            if not force:
-                dup = _find_duplicate_product(nom, reference)
-                if dup is not None:
-                    raise ValueError(
-                        f"Un produit identique semble déjà exister : « {dup.nom} »"
-                        + (f" (réf. {dup.reference})" if dup.reference else "")
-                        + ". Modifiez-le, ou cochez « créer quand même » si c'est"
-                        " bien un produit différent."
+            with operation_transaction():
+                nom = _limit((request.POST.get("nom") or "").strip(), 200, "Nom du produit")
+                if not nom:
+                    raise ValueError("Le nom est obligatoire.")
+                reference = _limit((request.POST.get("reference") or "").strip(), 80, "Référence")
+                # Anti-doublon : refuse un nom déjà utilisé (insensible à la casse et
+                # aux espaces) ou une référence déjà prise, sauf si on force.
+                force = request.POST.get("force_create") == "1"
+                if not force:
+                    dup = _find_duplicate_product(nom, reference)
+                    if dup is not None:
+                        raise ValueError(
+                            f"Un produit identique semble déjà exister : « {dup.nom} »"
+                            + (f" (réf. {dup.reference})" if dup.reference else "")
+                            + ". Modifiez-le, ou cochez « créer quand même » si c'est"
+                            " bien un produit différent."
+                        )
+                description = (request.POST.get("description") or "").strip()
+                categorie = _limit((request.POST.get("categorie") or "").strip(), 120, "Catégorie")
+                unite = _limit((request.POST.get("unite") or "").strip(), 40, "Unité")
+                prix_achat = number(request.POST.get("prix_achat") or 0)
+                prix = number(request.POST.get("prix_unitaire") or 0)
+                if prix < 0:
+                    raise ValueError("Le prix doit être positif ou nul.")
+                seuil = number(request.POST.get("seuil_alerte") or 0)
+                stock_max = number(request.POST.get("stock_max") or 0)
+                emplacement = _limit((request.POST.get("emplacement") or "").strip(), 120, "Emplacement")
+                qte = number(request.POST.get("quantite_stock") or 0)
+                if qte < 0 or prix_achat < 0 or seuil < 0 or stock_max < 0:
+                    raise ValueError("Les prix et quantités doivent être positifs ou nuls.")
+                now = _iso_now()
+                p = Product.objects.create(
+                    uuid=str(uuid_mod.uuid4()),
+                    reference=reference,
+                    nom=nom,
+                    description=description,
+                    categorie=categorie,
+                    unite=unite,
+                    prix_achat=prix_achat,
+                    prix_unitaire=prix,
+                    quantite_stock=qte,
+                    seuil_alerte=seuil,
+                    stock_max=stock_max,
+                    emplacement=emplacement,
+                    actif=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+                if qte > 0:
+                    r = _remote(request)
+                    agent = _current_remote_user(request)
+                    StockMovement.objects.create(
+                        uuid=str(uuid_mod.uuid4()), product_id=p.id, product_uuid=p.uuid,
+                        product_nom=p.nom, type="entree", quantite=qte, stock_apres=qte,
+                        motif="Stock initial",
+                        agent_id=agent.id if agent else None,
+                        agent_uuid=agent.uuid if agent else "",
+                        agent_nom=r.get("nom_complet") or "",
+                        created_at=now,
                     )
-            description = (request.POST.get("description") or "").strip()
-            categorie = _limit((request.POST.get("categorie") or "").strip(), 120, "Catégorie")
-            unite = _limit((request.POST.get("unite") or "").strip(), 40, "Unité")
-            prix_achat = float(request.POST.get("prix_achat") or 0)
-            prix = float(request.POST.get("prix_unitaire") or 0)
-            if prix < 0:
-                raise ValueError("Le prix doit être positif ou nul.")
-            seuil = float(request.POST.get("seuil_alerte") or 0)
-            stock_max = float(request.POST.get("stock_max") or 0)
-            emplacement = _limit((request.POST.get("emplacement") or "").strip(), 120, "Emplacement")
-            qte = float(request.POST.get("quantite_stock") or 0)
-            now = _iso_now()
-            p = Product.objects.create(
-                uuid=str(uuid_mod.uuid4()),
-                reference=reference,
-                nom=nom,
-                description=description,
-                categorie=categorie,
-                unite=unite,
-                prix_achat=prix_achat,
-                prix_unitaire=prix,
-                quantite_stock=qte,
-                seuil_alerte=seuil,
-                stock_max=stock_max,
-                emplacement=emplacement,
-                actif=True,
-                created_at=now,
-                updated_at=now,
-            )
-            _log_audit(request, "product_create", target_type="product", target_id=p.uuid, details=nom)
-            messages.success(request, f"Produit « {nom} » créé.")
-            return redirect("web:products")
+                _log_audit(request, "product_create", target_type="product", target_id=p.uuid, details=nom)
+                messages.success(request, f"Produit « {nom} » créé.")
+                return redirect("web:products")
         except (ValueError, TypeError) as e:
             error = str(e)
     return render(request, "web/product_form.html", {
@@ -1000,6 +1033,7 @@ def product_search_api(request):
 
 @login_required(login_url="web:login")
 @role_required("super_admin", "admin")
+@operation_transaction()
 def product_edit(request, pk):
     product = get_object_or_404(Product, pk=pk)
     error = None
@@ -1008,12 +1042,14 @@ def product_edit(request, pk):
             nom = (request.POST.get("nom") or "").strip()
             if not nom:
                 raise ValueError("Le nom est obligatoire.")
-            prix = float(request.POST.get("prix_unitaire") or 0)
+            prix = number(request.POST.get("prix_unitaire") or 0)
             if prix < 0:
                 raise ValueError("Le prix doit être positif ou nul.")
-            seuil = float(request.POST.get("seuil_alerte") or 0)
-            prix_achat = float(request.POST.get("prix_achat") or 0)
-            stock_max = float(request.POST.get("stock_max") or 0)
+            seuil = number(request.POST.get("seuil_alerte") or 0)
+            prix_achat = number(request.POST.get("prix_achat") or 0)
+            stock_max = number(request.POST.get("stock_max") or 0)
+            if min(seuil, prix_achat, stock_max) < 0:
+                raise ValueError("Le prix d'achat, le seuil et le stock maximal doivent être positifs ou nuls.")
             actif = request.POST.get("actif") == "on"
             product.nom = _limit(nom, 200, "Nom du produit")
             product.reference = _limit((request.POST.get("reference") or "").strip(), 80, "Référence")
@@ -1054,68 +1090,70 @@ def stock_adjust(request, pk):
     error = None
     if request.method == "POST":
         try:
-            type_ = (request.POST.get("type") or "").strip()
-            if type_ not in ("entree", "sortie"):
-                raise ValueError("Type de mouvement invalide.")
-            qte_raw = (request.POST.get("quantite") or "").strip().replace(" ", "")
-            quantite = float(qte_raw)
-            if quantite <= 0:
-                raise ValueError("La quantité doit être strictement positive.")
-            motif = _limit((request.POST.get("motif") or "").strip(), 255, "Motif")
+            with operation_transaction():
+                product = get_object_or_404(Product.objects.select_for_update(), pk=pk)
+                type_ = (request.POST.get("type") or "").strip()
+                if type_ not in ("entree", "sortie"):
+                    raise ValueError("Type de mouvement invalide.")
+                qte_raw = (request.POST.get("quantite") or "").strip().replace(" ", "")
+                quantite = number(qte_raw)
+                if quantite <= 0:
+                    raise ValueError("La quantité doit être strictement positive.")
+                motif = _limit((request.POST.get("motif") or "").strip(), 255, "Motif")
 
-            current_stock = float(product.quantite_stock or 0)
-            if type_ == "entree":
-                new_stock = current_stock + quantite
-            else:
-                if quantite > current_stock:
-                    raise ValueError(
-                        f"Stock insuffisant : {current_stock:g} disponible, "
-                        f"sortie demandée {quantite:g}."
-                    )
-                new_stock = current_stock - quantite
+                current_stock = float(product.quantite_stock or 0)
+                if type_ == "entree":
+                    new_stock = add(current_stock, quantite)
+                else:
+                    if quantite > current_stock:
+                        raise ValueError(
+                            f"Stock insuffisant : {current_stock:g} disponible, "
+                            f"sortie demandée {quantite:g}."
+                        )
+                    new_stock = subtract(current_stock, quantite)
 
-            # Agent (web)
-            r = _remote(request)
-            agent = None
-            ident = r.get("identifiant")
-            if ident:
-                agent = RemoteUser.objects.filter(identifiant=ident).order_by("-id").first()
+                # Agent (web)
+                r = _remote(request)
+                agent = None
+                ident = r.get("identifiant")
+                if ident:
+                    agent = _current_remote_user(request)
 
-            # Crée le mouvement
-            mv = StockMovement.objects.create(
-                uuid=str(uuid_mod.uuid4()),
-                product_id=product.id,           # id serveur (sera traduit au pull)
-                product_uuid=product.uuid,
-                product_nom=product.nom,
-                type=type_,
-                quantite=quantite,
-                stock_apres=new_stock,
-                motif=motif,
-                sale_id=None,
-                agent_id=(agent.id if agent else None),
-                agent_uuid=(agent.uuid if agent else ""),
-                agent_nom=(agent.nom_complet if agent else r.get("nom_complet") or ""),
-                created_at=_iso_now(),
-            )
-            # Met à jour le produit
-            product.quantite_stock = new_stock
-            product.updated_at = _iso_now()
-            product.save()
+                # Crée le mouvement
+                mv = StockMovement.objects.create(
+                    uuid=str(uuid_mod.uuid4()),
+                    product_id=product.id,           # id serveur (sera traduit au pull)
+                    product_uuid=product.uuid,
+                    product_nom=product.nom,
+                    type=type_,
+                    quantite=quantite,
+                    stock_apres=new_stock,
+                    motif=motif,
+                    sale_id=None,
+                    agent_id=(agent.id if agent else None),
+                    agent_uuid=(agent.uuid if agent else ""),
+                    agent_nom=(agent.nom_complet if agent else r.get("nom_complet") or ""),
+                    created_at=_iso_now(),
+                )
+                # Met à jour le produit
+                product.quantite_stock = new_stock
+                product.updated_at = _iso_now()
+                product.save()
 
-            _log_audit(
-                request,
-                "stock_entree" if type_ == "entree" else "stock_sortie",
-                target_type="product", target_id=product.uuid,
-                details=f"{product.nom} : {type_} {quantite:g} → {new_stock:g}"
-                + (f" — {motif}" if motif else ""),
-            )
+                _log_audit(
+                    request,
+                    "stock_entree" if type_ == "entree" else "stock_sortie",
+                    target_type="product", target_id=product.uuid,
+                    details=f"{product.nom} : {type_} {quantite:g} → {new_stock:g}"
+                    + (f" — {motif}" if motif else ""),
+                )
 
-            messages.success(
-                request,
-                f"{'Entrée' if type_ == 'entree' else 'Sortie'} de {quantite:g} "
-                f"unités enregistrée pour « {product.nom} ». Stock : {new_stock:g}.",
-            )
-            return redirect("web:products")
+                messages.success(
+                    request,
+                    f"{'Entrée' if type_ == 'entree' else 'Sortie'} de {quantite:g} "
+                    f"unités enregistrée pour « {product.nom} ». Stock : {new_stock:g}.",
+                )
+                return redirect("web:products")
         except (ValueError, TypeError) as e:
             error = str(e)
 
@@ -1128,6 +1166,7 @@ def stock_adjust(request, pk):
 
 @login_required(login_url="web:login")
 @role_required("super_admin", "admin")
+@operation_transaction()
 def product_toggle(request, pk):
     """Active/désactive un produit (équivalent suppression douce)."""
     product = get_object_or_404(Product, pk=pk)
@@ -1151,10 +1190,13 @@ def product_toggle(request, pk):
 
 def _current_remote_user(request):
     """Fiche RemoteUser (la plus récente) correspondant à l'utilisateur connecté."""
-    ident = _remote(request).get("identifiant")
-    if not ident:
-        return None
-    return RemoteUser.objects.filter(identifiant=ident).order_by("-id").first()
+    identity = _remote(request)
+    if identity.get("uuid"):
+        return RemoteUser.objects.filter(uuid=identity["uuid"], actif=True).first()
+    if identity.get("id"):
+        return RemoteUser.objects.filter(pk=identity["id"], actif=True).first()
+    ident = identity.get("identifiant")
+    return RemoteUser.objects.filter(identifiant=ident, actif=True).order_by("-id").first() if ident else None
 
 
 @login_required(login_url="web:login")
@@ -1169,7 +1211,7 @@ def stock_entry_request(request, pk):
     if request.method == "POST":
         try:
             qte_raw = (request.POST.get("quantite") or "").strip().replace(" ", "")
-            quantite = float(qte_raw)
+            quantite = number(qte_raw)
             if quantite <= 0:
                 raise ValueError("La quantité doit être strictement positive.")
             motif = _limit((request.POST.get("motif") or "").strip(), 255, "Motif")
@@ -1225,11 +1267,11 @@ def product_request_new(request):
             if not nom:
                 raise ValueError("Le nom du produit est obligatoire.")
             reference = _limit((request.POST.get("reference") or "").strip(), 80, "Référence")
-            prix = float(request.POST.get("prix_unitaire") or 0)
+            prix = number(request.POST.get("prix_unitaire") or 0)
             if prix < 0:
                 raise ValueError("Le prix doit être positif ou nul.")
-            seuil = float(request.POST.get("seuil_alerte") or 0)
-            qte = float((request.POST.get("quantite") or "0").strip().replace(" ", ""))
+            seuil = number(request.POST.get("seuil_alerte") or 0)
+            qte = number((request.POST.get("quantite") or "0").strip().replace(" ", ""))
             if qte < 0:
                 raise ValueError("La quantité initiale doit être positive ou nulle.")
             description = (request.POST.get("description") or "").strip()
@@ -1300,6 +1342,7 @@ def stock_validations(request):
 
 @login_required(login_url="web:login")
 @role_required("super_admin", "admin")
+@operation_transaction()
 def stock_request_validate(request, pk):
     """Valide une demande : crée le mouvement d'entrée et incrémente le stock réel."""
     req = get_object_or_404(StockEntryRequest, pk=pk)
@@ -1307,6 +1350,17 @@ def stock_request_validate(request, pk):
         return redirect("web:stock_validations")
     if req.statut != "en_attente":
         messages.warning(request, "Cette demande a déjà été traitée.")
+        return redirect("web:stock_validations")
+
+    try:
+        entree = number(req.quantite or 0)
+        if entree < 0 or (req.kind != "nouveau_produit" and entree == 0):
+            raise ValueError("La quantité demandée est invalide.")
+        if req.kind == "nouveau_produit":
+            if number(req.new_prix_unitaire) < 0 or number(req.new_seuil_alerte) < 0:
+                raise ValueError("Le prix et le seuil doivent être positifs ou nuls.")
+    except (ValueError, TypeError) as e:
+        messages.error(request, str(e))
         return redirect("web:stock_validations")
 
     now = _iso_now()
@@ -1338,8 +1392,7 @@ def stock_request_validate(request, pk):
             return redirect("web:stock_validations")
 
     current_stock = float(product.quantite_stock or 0)
-    entree = float(req.quantite or 0)
-    new_stock = current_stock + entree
+    new_stock = add(current_stock, entree)
 
     # Mouvement d'entrée (crédité à l'agent demandeur) — seulement si quantité > 0.
     mv_uuid = ""
@@ -1402,6 +1455,7 @@ def stock_request_validate(request, pk):
 
 @login_required(login_url="web:login")
 @role_required("super_admin", "admin")
+@operation_transaction()
 def stock_request_reject(request, pk):
     """Rejette une demande : aucune incidence sur le stock."""
     req = get_object_or_404(StockEntryRequest, pk=pk)
@@ -1458,10 +1512,14 @@ def pending_stock_api(request):
 
 @login_required(login_url="web:login")
 @delete_required
+@operation_transaction()
 def transaction_delete(request, pk):
     """Suppression douce d'une transaction (dépôt/retrait) → corbeille."""
     tx = get_object_or_404(Transaction, pk=pk, deleted=False)
     if request.method == "POST":
+        if tx.type == "depot" and tx.montant > _matricule_balance(tx.matricule):
+            messages.error(request, "Ce dépôt a déjà été utilisé : son annulation rendrait le solde négatif.")
+            return redirect("web:transactions")
         tx.deleted = True
         tx.save()
         _log_audit(
@@ -1478,10 +1536,14 @@ def transaction_delete(request, pk):
 
 @login_required(login_url="web:login")
 @delete_required
+@operation_transaction()
 def transaction_restore(request, pk):
     """Restaure une transaction depuis la corbeille."""
     tx = get_object_or_404(Transaction, pk=pk, deleted=True)
     if request.method == "POST":
+        if tx.type == "retrait" and tx.montant > _matricule_balance(tx.matricule):
+            messages.error(request, "Solde insuffisant pour restaurer ce retrait.")
+            return redirect("web:trash")
         tx.deleted = False
         tx.save()
         _log_audit(
@@ -1499,14 +1561,15 @@ def transaction_restore(request, pk):
 def _sale_product(sale):
     """Retrouve le produit d'une vente (par uuid d'abord, sinon id serveur)."""
     if sale.product_uuid:
-        p = Product.objects.filter(uuid=sale.product_uuid).first()
-        if p:
-            return p
+        # Les identifiants numériques appartiennent au poste d'origine.
+        # Si l'UUID est connu, aucun repli vers un autre produit portant son id.
+        return Product.objects.filter(uuid=sale.product_uuid).first()
     return Product.objects.filter(pk=sale.product_id).first()
 
 
 @login_required(login_url="web:login")
 @delete_required
+@operation_transaction()
 def sale_delete(request, pk):
     """Suppression douce d'une vente → corbeille. Le stock du produit est rendu."""
     sale = get_object_or_404(Sale, pk=pk, deleted=False)
@@ -1516,7 +1579,7 @@ def sale_delete(request, pk):
         # Rend la quantité au stock (mouvement d'annulation, traçable).
         product = _sale_product(sale)
         if product:
-            new_stock = float(product.quantite_stock or 0) + float(sale.quantite or 0)
+            new_stock = add(product.quantite_stock or 0, sale.quantite or 0)
             product.quantite_stock = new_stock
             product.updated_at = _iso_now()
             product.save()
@@ -1544,15 +1607,25 @@ def sale_delete(request, pk):
 
 @login_required(login_url="web:login")
 @delete_required
+@operation_transaction()
 def sale_restore(request, pk):
     """Restaure une vente depuis la corbeille. Le stock est de nouveau décrémenté."""
     sale = get_object_or_404(Sale, pk=pk, deleted=True)
     if request.method == "POST":
+        product = _sale_product(sale)
+        if product is None:
+            messages.error(request, "Produit introuvable : la vente ne peut pas être restaurée.")
+            return redirect("web:trash")
+        if sale.quantite > product.quantite_stock:
+            messages.error(request, "Stock insuffisant pour restaurer cette vente.")
+            return redirect("web:trash")
+        if sale.montant_total > _matricule_balance(sale.matricule):
+            messages.error(request, "Solde insuffisant pour restaurer cette vente.")
+            return redirect("web:trash")
         sale.deleted = False
         sale.save()
-        product = _sale_product(sale)
         if product:
-            new_stock = float(product.quantite_stock or 0) - float(sale.quantite or 0)
+            new_stock = subtract(product.quantite_stock or 0, sale.quantite or 0)
             product.quantite_stock = new_stock
             product.updated_at = _iso_now()
             product.save()
@@ -1591,6 +1664,7 @@ def stock_movement_restore(request, pk):
 
 @login_required(login_url="web:login")
 @delete_required
+@operation_transaction()
 def product_restore(request, pk):
     product = get_object_or_404(Product, pk=pk, actif=False)
     if request.method == "POST":
@@ -1623,6 +1697,7 @@ def client_restore(request, pk):
 
 @login_required(login_url="web:login")
 @delete_required
+@operation_transaction()
 def trash_all_active_data(request):
     if request.method == "POST":
         now = _iso_now()
@@ -1756,59 +1831,61 @@ def inventory(request):
 
     if request.method == "POST":
         try:
-            motif = (request.POST.get("motif") or "").strip() or "Inventaire physique"
+            with operation_transaction():
+                products = list(Product.objects.select_for_update().filter(actif=True).order_by("pk"))
+                motif = (request.POST.get("motif") or "").strip() or "Inventaire physique"
 
-            r = _remote(request)
-            agent = None
-            ident = r.get("identifiant")
-            if ident:
-                agent = RemoteUser.objects.filter(identifiant=ident).order_by("-id").first()
-            agent_id = agent.id if agent else None
-            agent_uuid = agent.uuid if agent else ""
-            agent_nom = agent.nom_complet if agent else (r.get("nom_complet") or "")
+                r = _remote(request)
+                agent = None
+                ident = r.get("identifiant")
+                if ident:
+                    agent = _current_remote_user(request)
+                agent_id = agent.id if agent else None
+                agent_uuid = agent.uuid if agent else ""
+                agent_nom = agent.nom_complet if agent else (r.get("nom_complet") or "")
 
-            adjustments = []
-            for p in products:
-                raw = request.POST.get(f"count_{p.id}")
-                if raw is None or raw.strip() == "":
-                    continue  # produit non compté → ignoré
-                counted = float(raw.strip().replace(" ", ""))
-                if counted < 0:
-                    raise ValueError(f"Quantité comptée invalide pour « {p.nom} ».")
-                theoretical = float(p.quantite_stock or 0)
-                ecart = counted - theoretical
-                if ecart == 0:
-                    continue  # pas d'écart → rien à faire
-                mv_type = "entree" if ecart > 0 else "sortie"
-                StockMovement.objects.create(
-                    uuid=str(uuid_mod.uuid4()),
-                    product_id=p.id, product_uuid=p.uuid, product_nom=p.nom,
-                    type=mv_type, quantite=abs(ecart), stock_apres=counted,
-                    motif=motif, sale_id=None,
-                    agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
-                    created_at=_iso_now(),
-                )
-                p.quantite_stock = counted
-                p.updated_at = _iso_now()
-                p.save()
-                adjustments.append((p.nom, theoretical, counted, ecart))
+                adjustments = []
+                for p in products:
+                    raw = request.POST.get(f"count_{p.id}")
+                    if raw is None or raw.strip() == "":
+                        continue  # produit non compté → ignoré
+                    counted = number(raw)
+                    if counted < 0:
+                        raise ValueError(f"Quantité comptée invalide pour « {p.nom} ».")
+                    theoretical = float(p.quantite_stock or 0)
+                    ecart = subtract(counted, theoretical)
+                    if ecart == 0:
+                        continue  # pas d'écart → rien à faire
+                    mv_type = "entree" if ecart > 0 else "sortie"
+                    StockMovement.objects.create(
+                        uuid=str(uuid_mod.uuid4()),
+                        product_id=p.id, product_uuid=p.uuid, product_nom=p.nom,
+                        type=mv_type, quantite=abs(ecart), stock_apres=counted,
+                        motif=motif, sale_id=None,
+                        agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
+                        created_at=_iso_now(),
+                    )
+                    p.quantite_stock = counted
+                    p.updated_at = _iso_now()
+                    p.save()
+                    adjustments.append((p.nom, theoretical, counted, ecart))
 
-            if not adjustments:
-                messages.info(request, "Aucun écart : tous les stocks comptés sont conformes.")
-            else:
-                detail = "; ".join(
-                    f"{nom}: {theo:g}→{cnt:g} ({'+' if ec > 0 else ''}{ec:g})"
-                    for nom, theo, cnt, ec in adjustments
-                )
-                _log_audit(
-                    request, "inventory_adjust", target_type="stock",
-                    target_id="", details=f"motif={motif} | {detail}",
-                )
-                messages.success(
-                    request,
-                    f"Inventaire enregistré : {len(adjustments)} produit(s) ajusté(s).",
-                )
-            return redirect("web:inventory")
+                if not adjustments:
+                    messages.info(request, "Aucun écart : tous les stocks comptés sont conformes.")
+                else:
+                    detail = "; ".join(
+                        f"{nom}: {theo:g}→{cnt:g} ({'+' if ec > 0 else ''}{ec:g})"
+                        for nom, theo, cnt, ec in adjustments
+                    )
+                    _log_audit(
+                        request, "inventory_adjust", target_type="stock",
+                        target_id="", details=f"motif={motif} | {detail}",
+                    )
+                    messages.success(
+                        request,
+                        f"Inventaire enregistré : {len(adjustments)} produit(s) ajusté(s).",
+                    )
+                return redirect("web:inventory")
         except (ValueError, TypeError) as e:
             error = str(e)
 
@@ -1852,10 +1929,7 @@ def clients(request):
     rows = []
     for c in qs[:500]:  # garde-fou : on calcule au plus 500 soldes par page de recherche
         tx = Transaction.objects.filter(matricule=c.matricule, deleted=False)
-        depots = tx.filter(type="depot").aggregate(s=Sum("montant"))["s"] or 0
-        retraits = tx.filter(type="retrait").aggregate(s=Sum("montant"))["s"] or 0
-        ventes = Sale.objects.filter(matricule=c.matricule, deleted=False).aggregate(s=Sum("montant_total"))["s"] or 0
-        solde = float(depots) - float(retraits) - float(ventes)
+        solde = _matricule_balance(c.matricule)
         n_ops = tx.count() + Sale.objects.filter(matricule=c.matricule, deleted=False).count()
         rows.append({"client": c, "solde": solde, "n_ops": n_ops})
 
@@ -1872,12 +1946,12 @@ def clients(request):
 
 
 def _client_form_post(request, client=None):
-    matricule = (request.POST.get("matricule") or "").strip()
+    matricule = _limit((request.POST.get("matricule") or "").strip(), 80, "matricule")
     if not matricule:
         raise ValueError("Le matricule est obligatoire.")
-    nom = (request.POST.get("nom") or "").strip()
-    telephone = (request.POST.get("telephone") or "").strip()
-    note = (request.POST.get("note") or "").strip()
+    nom = _limit((request.POST.get("nom") or "").strip(), 200, "nom")
+    telephone = _limit((request.POST.get("telephone") or "").strip(), 40, "telephone")
+    note = _limit((request.POST.get("note") or "").strip(), 255, "note")
     now = _iso_now()
     if client is None:
         if Client.objects.filter(matricule=matricule).exists():
@@ -1891,6 +1965,11 @@ def _client_form_post(request, client=None):
         # Si le matricule change, vérifier qu'il n'entre pas en conflit.
         if matricule != client.matricule and Client.objects.filter(matricule=matricule).exists():
             raise ValueError(f"Un autre client a déjà le matricule « {matricule} ».")
+        if matricule != client.matricule and (
+            Transaction.objects.filter(matricule=client.matricule).exists()
+            or Sale.objects.filter(matricule=client.matricule).exists()
+        ):
+            raise ValueError("Le matricule d'un client ayant des opérations ne peut pas être modifié.")
         client.matricule = matricule
         client.nom = nom
         client.telephone = telephone
@@ -1926,6 +2005,7 @@ def client_new(request):
 
 @login_required(login_url="web:login")
 @role_required("super_admin", "admin")
+@operation_transaction()
 def client_edit(request, pk):
     client = get_object_or_404(Client, pk=pk)
     error = None
@@ -2190,10 +2270,10 @@ def _user_form_post(request, user=None):
     remote_role = (request.session.get("remote_user") or {}).get("role")
     allowed = _allowed_target_roles_for(remote_role)
 
-    identifiant = (request.POST.get("identifiant") or "").strip()
-    nom_complet = (request.POST.get("nom_complet") or "").strip()
-    matricule = (request.POST.get("matricule") or "").strip()
-    telephone = (request.POST.get("telephone") or "").strip()
+    identifiant = _limit((request.POST.get("identifiant") or "").strip(), 120, "identifiant")
+    nom_complet = _limit((request.POST.get("nom_complet") or "").strip(), 200, "nom_complet")
+    matricule = _limit((request.POST.get("matricule") or "").strip(), 60, "matricule")
+    telephone = _limit((request.POST.get("telephone") or "").strip(), 40, "telephone")
     role = (request.POST.get("role") or "").strip()
     password = request.POST.get("password") or ""
     can_delete = request.POST.get("can_delete") == "on"
@@ -2223,6 +2303,10 @@ def _user_form_post(request, user=None):
         # Si l'identifiant change, vérifier l'unicité.
         if identifiant != user.identifiant and RemoteUser.objects.filter(identifiant=identifiant).exists():
             raise ValueError(f"L'identifiant « {identifiant} » est déjà utilisé.")
+        if user.role == "super_admin" and role != "super_admin" and user.actif and not RemoteUser.objects.filter(
+            role="super_admin", actif=True
+        ).exclude(pk=user.pk).exists():
+            raise ValueError("Impossible de rétrograder le dernier super-administrateur actif.")
         user.identifiant = identifiant
         user.nom_complet = nom_complet
         user.matricule = matricule
@@ -2237,6 +2321,7 @@ def _user_form_post(request, user=None):
 
 @login_required(login_url="web:login")
 @role_required("super_admin", "admin")
+@operation_transaction()
 def user_new(request):
     error = None
     r = _remote(request)
@@ -2263,6 +2348,7 @@ def user_new(request):
 
 @login_required(login_url="web:login")
 @role_required("super_admin", "admin")
+@operation_transaction()
 def user_edit(request, pk):
     target = get_object_or_404(RemoteUser, pk=pk)
     r = _remote(request)
@@ -2291,6 +2377,7 @@ def user_edit(request, pk):
 
 @login_required(login_url="web:login")
 @role_required("super_admin", "admin")
+@operation_transaction()
 def user_toggle(request, pk):
     target = get_object_or_404(RemoteUser, pk=pk)
     r = _remote(request)
@@ -2302,6 +2389,11 @@ def user_toggle(request, pk):
         messages.warning(request, "Vous ne pouvez pas désactiver votre propre compte.")
         return redirect("web:users")
     if request.method == "POST":
+        if target.role == "super_admin" and target.actif and not RemoteUser.objects.filter(
+            role="super_admin", actif=True
+        ).exclude(pk=target.pk).exists():
+            messages.error(request, "Impossible de désactiver le dernier super-administrateur actif.")
+            return redirect("web:users")
         target.actif = not target.actif
         target.updated_at = _iso_now()
         target.save()

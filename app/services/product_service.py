@@ -8,6 +8,7 @@ from app.models.product import Product
 from app.models.stock_movement import StockMovement
 from app.services import audit_service, auth_service
 from app.utils.helpers import new_uuid, now_iso
+from app.utils.accounting import add, subtract, number
 
 
 class ProductError(Exception):
@@ -52,7 +53,17 @@ def create_product(
     nom = (nom or "").strip()
     if not nom:
         raise ProductError("Le nom du produit est obligatoire.")
-    if prix_unitaire is None or prix_unitaire < 0:
+    try:
+        prix_unitaire = number(prix_unitaire)
+        prix_achat = number(prix_achat or 0)
+        quantite_initiale = number(quantite_initiale)
+        seuil_alerte = number(seuil_alerte)
+        stock_max = number(stock_max or 0)
+    except (ValueError, TypeError):
+        raise ProductError("Les prix et quantités doivent être des nombres finis.")
+    if seuil_alerte < 0 or stock_max < 0:
+        raise ProductError("Les seuils de stock doivent être positifs ou nuls.")
+    if prix_unitaire < 0:
         raise ProductError("Le prix de vente doit être positif ou nul.")
     if prix_achat is not None and prix_achat < 0:
         raise ProductError("Le prix d'achat doit être positif ou nul.")
@@ -122,6 +133,12 @@ def update_product(
     product = get_product(product_id)
     if product is None:
         raise ProductError("Produit introuvable.")
+    try:
+        for value in (prix_unitaire, prix_achat, seuil_alerte, stock_max):
+            if value is not None and number(value) < 0:
+                raise ValueError()
+    except (ValueError, TypeError):
+        raise ProductError("Les prix et quantités doivent être des nombres finis positifs ou nuls.")
     fields = []
     params: list = []
     if nom is not None:
@@ -237,7 +254,11 @@ def adjust_stock(product_id: int, type_: str, quantite: float, motif: str = "") 
     """Entrée ou sortie manuelle de stock."""
     if type_ not in ("entree", "sortie"):
         raise ProductError("Type de mouvement invalide.")
-    if quantite is None or quantite <= 0:
+    try:
+        quantite = number(quantite)
+    except (ValueError, TypeError):
+        raise ProductError("La quantité doit être un nombre fini strictement positif.")
+    if quantite <= 0:
         raise ProductError("La quantité doit être strictement positive.")
     agent = auth_service.current_user()
     with db_transaction() as conn:
@@ -248,13 +269,13 @@ def adjust_stock(product_id: int, type_: str, quantite: float, motif: str = "") 
             raise ProductError("Produit introuvable.")
         current = float(row["quantite_stock"])
         if type_ == "entree":
-            new_stock = current + quantite
+            new_stock = add(current, quantite)
         else:
             if quantite > current:
                 raise ProductError(
                     f"Stock insuffisant. Disponible : {current:g}, demandé : {quantite:g}"
                 )
-            new_stock = current - quantite
+            new_stock = subtract(current, quantite)
         conn.execute(
             "UPDATE products SET quantite_stock = ?, updated_at = ?, sync_status = 'pending' WHERE id = ?",
             (new_stock, now_iso(), product_id),

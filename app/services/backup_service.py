@@ -1,13 +1,15 @@
 """Sauvegarde et restauration de la base SQLite."""
 from __future__ import annotations
 
-import shutil
+import sqlite3
+from contextlib import closing
+from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
 from app.config import BACKUP_DIR, DATETIME_FMT, DB_PATH, ensure_directories
-from app.db.database import close_connection, get_connection
+from app.db.database import get_connection, transaction as db_transaction
 from app.services import audit_service, auth_service
 from app.utils.helpers import now_iso
 
@@ -23,13 +25,12 @@ def create_backup(kind: str = "manual", note: str = "") -> Path:
     if not DB_PATH.exists():
         raise BackupError("Base de données introuvable.")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dest = BACKUP_DIR / f"backup_{kind}_{ts}.db"
+    dest = BACKUP_DIR / f"backup_{kind}_{ts}_{uuid4().hex[:8]}.db"
 
     conn = get_connection()
     conn.commit()
     # Sauvegarde via l'API SQLite (sûr même base ouverte)
-    import sqlite3
-    with sqlite3.connect(str(dest)) as bck:
+    with closing(sqlite3.connect(str(dest))) as bck:
         conn.backup(bck)
 
     size = dest.stat().st_size
@@ -51,6 +52,24 @@ def create_backup(kind: str = "manual", note: str = "") -> Path:
     return dest
 
 
+def export_database(file_path: Path) -> Path:
+    """Exporte un instantané SQLite complet, y compris les écritures WAL."""
+    import shutil
+    file_path = Path(file_path)
+    if file_path.resolve() == Path(DB_PATH).resolve():
+        raise BackupError("L'export ne peut pas remplacer la base active.")
+    snapshot = create_backup(kind="manual", note="Export manuel")
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = file_path.with_name(file_path.name + "." + uuid4().hex + ".tmp")
+    try:
+        shutil.copy2(snapshot, temporary)
+        temporary.replace(file_path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return file_path
+
+
 def list_backups() -> List[dict]:
     conn = get_connection()
     rows = conn.execute(
@@ -60,29 +79,55 @@ def list_backups() -> List[dict]:
 
 
 def restore_backup(backup_path: Path) -> None:
-    if not backup_path.exists():
+    """Valide et prépare la copie avant une restauration atomique via SQLite."""
+    from app.db import database
+    from app.services.sync_service import sync_lock
+
+    backup_path = Path(backup_path)
+    if not backup_path.is_file():
         raise BackupError(f"Fichier introuvable : {backup_path}")
-    # On crée une sauvegarde de sécurité avant restauration
-    safety = None
-    if DB_PATH.exists():
-        safety = create_backup(kind="auto", note="Avant restauration")
-    actor = auth_service.current_user()
+    if backup_path.resolve() == Path(DB_PATH).resolve():
+        raise BackupError("Sélectionnez une sauvegarde distincte de la base active.")
+    with sync_lock, closing(sqlite3.connect(":memory:")) as staged:
+        staged.row_factory = sqlite3.Row
+        try:
+            with closing(sqlite3.connect(backup_path.resolve().as_uri() + "?mode=ro", uri=True)) as source:
+                source.backup(staged)
+            if staged.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise BackupError("La sauvegarde est endommagée.")
+            required = {"users": {"id", "uuid", "identifiant", "password_hash", "role"},
+                        "transactions": {"id", "uuid", "matricule", "type", "montant"}}
+            for table, names in required.items():
+                columns = {r["name"] for r in staged.execute(f"PRAGMA table_info({table})")}
+                if not names <= columns:
+                    raise BackupError("Ce fichier n'est pas une sauvegarde compatible du gestionnaire.")
+            for statement in database.SCHEMA_STATEMENTS:
+                staged.execute(statement)
+            staged.commit()
+            database._apply_post_migrations(staged)
+            database._allow_missing_agents(staged)
+            if staged.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise BackupError("La sauvegarde contient des références de données invalides.")
+        except (sqlite3.Error, OSError) as exc:
+            raise BackupError(f"Sauvegarde invalide : {exc}") from exc
 
-    close_connection()
-    shutil.copy2(str(backup_path), str(DB_PATH))
-
-    # On relance les tables si besoin
-    from app.db.database import init_database
-    init_database()
-
-    audit_service.log_action(
-        actor.id if actor else None,
-        actor.identifiant if actor else None,
-        "BACKUP_RESTORE",
-        target_type="backup",
-        target_id=str(backup_path.name),
-        details=f"safety={safety.name if safety else 'none'}",
-    )
+        safety = create_backup(kind="auto", note="Avant restauration") if DB_PATH.exists() else None
+        actor = auth_service.current_user()
+        destination = get_connection()
+        destination.commit()
+        # L'API de sauvegarde respecte WAL et les autres connexions ouvertes.
+        staged.backup(destination)
+        if safety:
+            destination.execute(
+                "INSERT INTO backups (file_path, size_bytes, kind, created_at, note) VALUES (?,?,?,?,?)",
+                (str(safety), safety.stat().st_size, "auto", now_iso(), "Avant restauration"),
+            )
+            destination.commit()
+        audit_service.log_action(
+            actor.id if actor else None, actor.identifiant if actor else None,
+            "BACKUP_RESTORE", target_type="backup", target_id=backup_path.name,
+            details=f"safety={safety.name if safety else 'none'}",
+        )
 
 
 # --- Sauvegarde planifiée (automatique) -------------------------------------
@@ -97,14 +142,19 @@ def prune_auto_backups(keep: int) -> int:
     rows = conn.execute(
         "SELECT id, file_path FROM backups WHERE kind = 'auto' ORDER BY id DESC"
     ).fetchall()
+    if keep < 0:
+        raise BackupError("Le nombre de sauvegardes à conserver ne peut pas être négatif.")
+    retained = {Path(row["file_path"]).resolve() for row in rows[:keep]}
     removed = 0
     for row in rows[keep:]:
         path = Path(row["file_path"])
         try:
-            if path.exists():
+            if not path.resolve().is_relative_to(Path(BACKUP_DIR).resolve()):
+                continue
+            if path.exists() and path.resolve() not in retained:
                 path.unlink()
         except OSError:
-            pass
+            continue
         conn.execute("DELETE FROM backups WHERE id = ?", (row["id"],))
         removed += 1
     if removed:
@@ -140,6 +190,7 @@ def run_auto_backup_if_due() -> Optional[Path]:
     return dest
 
 
+@db_transaction()
 def wipe_data() -> None:
     """Réinitialisation : vide transactions et audit_logs (conserve utilisateurs)."""
     conn = get_connection()

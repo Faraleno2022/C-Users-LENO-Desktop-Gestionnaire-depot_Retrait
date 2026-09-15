@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from html import escape
 from typing import Sequence
 
 from openpyxl import Workbook
@@ -22,7 +23,7 @@ from reportlab.platypus import (
 def export_to_excel(file_path: Path, title: str, headers: Sequence[str], rows: Sequence[Sequence]) -> Path:
     wb = Workbook()
     ws = wb.active
-    ws.title = title[:30] or "Export"
+    ws.title = title.translate(str.maketrans({c: "-" for c in "\\/*?:[]"})).strip("\'")[:31] or "Export"
     ws.append([title])
     ws["A1"].font = Font(bold=True, size=14)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max(1, len(headers)))
@@ -39,6 +40,10 @@ def export_to_excel(file_path: Path, title: str, headers: Sequence[str], rows: S
     for row in rows:
         ws.append(list(row))
 
+    for cells in ws.iter_rows():
+        for cell in cells:
+            if cell.data_type == "f":
+                cell.data_type = "s"
     for col_idx, _ in enumerate(headers, start=1):
         max_len = 12
         for cell in ws.iter_cols(min_col=col_idx, max_col=col_idx, values_only=True).__next__():
@@ -64,9 +69,9 @@ def export_to_pdf(file_path: Path, title: str, headers: Sequence[str], rows: Seq
         bottomMargin=15 * mm,
     )
     styles = getSampleStyleSheet()
-    story = [Paragraph(f"<b>{title}</b>", styles["Title"])]
+    story = [Paragraph(f"<b>{escape(title)}</b>", styles["Title"])]
     if subtitle:
-        story.append(Paragraph(subtitle, styles["Normal"]))
+        story.append(Paragraph(escape(subtitle), styles["Normal"]))
     story.append(Spacer(1, 6 * mm))
 
     data = [list(headers)] + [list(map(_pdf_cell, row)) for row in rows]

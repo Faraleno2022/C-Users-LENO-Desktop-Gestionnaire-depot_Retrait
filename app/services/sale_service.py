@@ -8,6 +8,7 @@ from app.models.sale import Sale
 from app.models.user import User
 from app.services import audit_service, auth_service, product_service, transaction_service
 from app.utils.helpers import new_uuid, now_iso
+from app.utils.accounting import add, subtract, multiply, number
 
 
 class SaleError(Exception):
@@ -26,14 +27,18 @@ def create_sale(
     telephone = (telephone or "").strip()
     if not matricule:
         raise SaleError("Le matricule du client est obligatoire.")
-    if quantite is None or quantite <= 0:
+    try:
+        quantite = number(quantite)
+    except (ValueError, TypeError):
+        raise SaleError("La quantité doit être un nombre fini strictement positif.")
+    if quantite <= 0:
         raise SaleError("La quantité doit être strictement positive.")
     if agent is None:
         raise SaleError("Agent non identifié.")
 
     with db_transaction() as conn:
         prow = conn.execute(
-            "SELECT id, nom, prix_unitaire, quantite_stock, actif FROM products WHERE id = ?",
+            "SELECT id, uuid, nom, prix_unitaire, quantite_stock, actif FROM products WHERE id = ?",
             (product_id,),
         ).fetchone()
         if prow is None:
@@ -48,14 +53,16 @@ def create_sale(
             )
 
         prix = float(prow["prix_unitaire"])
-        montant = prix * quantite
+        montant = multiply(prix, quantite)
+        if montant < 0:
+            raise SaleError("Le prix du produit ne peut pas être négatif.")
 
         balance = transaction_service.get_matricule_balance(matricule)
         if montant > balance:
             raise SaleError(
                 f"Solde insuffisant. Solde du client : {balance:.0f}, montant de l'achat : {montant:.0f}"
             )
-        new_balance = balance - montant
+        new_balance = subtract(balance, montant)
 
         cur = conn.execute(
             """INSERT INTO sales
@@ -71,7 +78,7 @@ def create_sale(
         )
         sale_id = cur.lastrowid
 
-        new_stock = stock - quantite
+        new_stock = subtract(stock, quantite)
         conn.execute(
             "UPDATE products SET quantite_stock = ?, updated_at = ?, sync_status = 'pending' WHERE id = ?",
             (new_stock, now_iso(), product_id),
@@ -97,13 +104,13 @@ def get_sale(sale_id: int) -> Optional[Sale]:
 
 def cancel_sale(sale_id: int) -> None:
     """Annule une vente (admin) : restitue le stock et le solde du client."""
-    sale = get_sale(sale_id)
-    if sale is None:
-        raise SaleError("Vente introuvable.")
-    if sale.deleted:
-        raise SaleError("Cette vente est déjà annulée.")
     agent = auth_service.current_user()
     with db_transaction() as conn:
+        sale = get_sale(sale_id)
+        if sale is None:
+            raise SaleError("Vente introuvable.")
+        if sale.deleted:
+            raise SaleError("Cette vente est déjà annulée.")
         conn.execute(
             "UPDATE sales SET deleted = 1, sync_status = 'pending' WHERE id = ?", (sale_id,)
         )
@@ -111,14 +118,14 @@ def cancel_sale(sale_id: int) -> None:
             "SELECT nom, quantite_stock FROM products WHERE id = ?", (sale.product_id,)
         ).fetchone()
         if prow is not None:
-            new_stock = float(prow["quantite_stock"]) + sale.quantite
+            new_stock = add(prow["quantite_stock"], sale.quantite)
             conn.execute(
                 "UPDATE products SET quantite_stock = ?, updated_at = ?, sync_status = 'pending' WHERE id = ?",
                 (new_stock, now_iso(), sale.product_id),
             )
             product_service._record_movement(
                 conn, sale.product_id, prow["nom"], "entree", sale.quantite, new_stock,
-                motif=f"Annulation vente #{sale_id}", agent=agent,
+                motif=f"Annulation vente #{sale_id}", sale_id=sale_id, agent=agent,
             )
     audit_service.log_action(
         agent.id if agent else None,

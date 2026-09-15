@@ -15,9 +15,11 @@ Authentification : jeton par poste, en-tête `Authorization: Device <token>`.
 from __future__ import annotations
 
 from typing import Dict, List, Optional
+from threading import RLock
+from functools import wraps
 
 from app.config import SYNC_STATUS_SYNCED
-from app.db.database import get_connection
+from app.db.database import get_connection, transaction as db_transaction
 from app.services import settings_service
 from app.utils.helpers import now_iso
 
@@ -27,12 +29,24 @@ except ImportError:  # pragma: no cover - requests fait partie des dépendances
     requests = None  # type: ignore
 
 
+# Un seul cycle à la fois, y compris les synchronisations manuelles.
+sync_lock = RLock()
+
+
+def serialized_sync(func):
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        with sync_lock:
+            return func(*args, **kwargs)
+    return wrapped
+
+
 class SyncError(Exception):
     pass
 
 
 # Tables synchronisées et colonnes envoyées (le serveur n'a pas besoin des id locaux
-# ni des hash de mot de passe). L'ordre respecte les dépendances logiques.
+# ; les hashes bcrypt permettent l'authentification web). L'ordre respecte les dépendances logiques.
 PUSH_TABLES: Dict[str, List[str]] = {
     "users": [
         "uuid", "identifiant", "nom_complet", "matricule", "telephone",
@@ -123,10 +137,10 @@ def _pull_since_key(table: str) -> str:
 # tolerate_missing). tolerate_missing=True => on met l'id à None plutôt que d'échouer.
 _LOOKUP_TABLES = {
     "transactions": [
-        ("agent_uuid", "agent_id", "users", False),
+        ("agent_uuid", "agent_id", "users", True),
     ],
     "sales": [
-        ("agent_uuid", "agent_id", "users", False),
+        ("agent_uuid", "agent_id", "users", True),
         ("product_uuid", "product_id", "products", False),
     ],
     "stock_movements": [
@@ -146,6 +160,14 @@ def _resolve_local_id(conn, lookup_table: str, ref_uuid: Optional[str]) -> Optio
         f"SELECT id FROM {lookup_table} WHERE uuid = ?", (ref_uuid,)
     ).fetchone()
     return int(row["id"]) if row else None
+
+
+def _check_cancelled():
+    # Le coeur métier reste utilisable sans importer Qt.
+    import sys
+    qt = sys.modules.get("PySide6.QtCore")
+    if qt is not None and qt.QThread.currentThread().isInterruptionRequested():
+        raise SyncError("Synchronisation interrompue à la fermeture.")
 
 
 def _require_requests() -> None:
@@ -171,18 +193,19 @@ def _collect_pending(table: str, columns: List[str], limit: int) -> List[dict]:
     return [dict(r) for r in rows]
 
 
-def _mark_synced(table: str, uuids: List[str]) -> None:
-    if not uuids:
+def _mark_synced(table: str, records: List[dict]) -> None:
+    """Acquitte uniquement la version effectivement envoyée au serveur."""
+    if not records:
         return
-    conn = get_connection()
-    ts = now_iso()
-    placeholders = ",".join("?" for _ in uuids)
-    conn.execute(
-        f"UPDATE {table} SET sync_status = '{SYNC_STATUS_SYNCED}', last_synced_at = ? "
-        f"WHERE uuid IN ({placeholders})",
-        [ts, *uuids],
-    )
-    conn.commit()
+    with db_transaction() as conn:
+        for record in records:
+            fields = [name for name in PUSH_TABLES[table] if name in record]
+            condition = " AND ".join(f"{name} IS ?" for name in fields)
+            conn.execute(
+                f"UPDATE {table} SET sync_status = ?, last_synced_at = ? "
+                f"WHERE sync_status = 'pending' AND {condition}",
+                [SYNC_STATUS_SYNCED, now_iso(), *(record[name] for name in fields)],
+            )
 
 
 def pending_total() -> int:
@@ -220,78 +243,75 @@ def _merge_pulled_record(table: str, columns: List[str], rec: dict) -> str:
 
     Retourne 'inserted' | 'updated' | 'skipped_pending' | 'conflict'.
     """
-    conn = get_connection()
-    uuid = rec.get("uuid")
-    if not uuid:
-        return "conflict"
-    cur = conn.execute(
-        f"SELECT id, sync_status FROM {table} WHERE uuid = ?", (uuid,)
-    ).fetchone()
+    with db_transaction() as conn:
+        uuid = rec.get("uuid")
+        if not uuid:
+            return "conflict"
+        cur = conn.execute(
+            f"SELECT id, sync_status FROM {table} WHERE uuid = ?", (uuid,)
+        ).fetchone()
 
-    # Prépare un dict de valeurs SQL en castant les booléens.
-    values = {}
-    for col in columns:
-        if col == "uuid":
-            continue
-        v = rec.get(col)
-        # Booléens Django → INTEGER 0/1 attendu en local
-        if isinstance(v, bool):
-            v = 1 if v else 0
-        values[col] = v
+        # Prépare un dict de valeurs SQL en castant les booléens.
+        values = {}
+        for col in columns:
+            if col == "uuid" or col not in rec:
+                continue
+            v = rec.get(col)
+            # Booléens Django → INTEGER 0/1 attendu en local
+            if isinstance(v, bool):
+                v = 1 if v else 0
+            values[col] = v
 
-    # Tables avec références à traduire (uuid serveur → id local).
-    if table in _LOOKUP_TABLES:
-        for uuid_field, id_field, lookup_table, tolerate in _LOOKUP_TABLES[table]:
-            ref_uuid = values.get(uuid_field)
-            local_id = _resolve_local_id(conn, lookup_table, ref_uuid)
-            if local_id is None:
-                if tolerate:
-                    values[id_field] = None
+        # Tables avec références à traduire (uuid serveur → id local).
+        if table in _LOOKUP_TABLES:
+            for uuid_field, id_field, lookup_table, tolerate in _LOOKUP_TABLES[table]:
+                ref_uuid = values.get(uuid_field)
+                local_id = _resolve_local_id(conn, lookup_table, ref_uuid)
+                if local_id is None:
+                    if tolerate:
+                        values[id_field] = None
+                    else:
+                        # La référence n'existe pas (encore) localement. Reporté ;
+                        # le pull suivant (après pull de la table parente) résoudra.
+                        return "conflict"
                 else:
-                    # La référence n'existe pas (encore) localement. Reporté ;
-                    # le pull suivant (après pull de la table parente) résoudra.
-                    return "conflict"
-            else:
-                values[id_field] = local_id
+                    values[id_field] = local_id
 
-    ts = now_iso()
-    if cur is None:
-        # INSERT — la ligne n'existe pas localement
-        cols_list = ["uuid", *values.keys(), "sync_status", "last_synced_at"]
-        placeholders = ",".join("?" for _ in cols_list)
-        params = [uuid, *values.values(), SYNC_STATUS_SYNCED, ts]
-        try:
-            conn.execute(
-                f"INSERT INTO {table} ({', '.join(cols_list)}) VALUES ({placeholders})",
-                params,
-            )
-            conn.commit()
-            return "inserted"
-        except Exception:
-            # Contraintes UNIQUE concurrentes (matricule, identifiant, etc.)
-            conn.rollback()
-            return "conflict"
-    else:
-        if cur["sync_status"] == "pending":
-            return "skipped_pending"
-        # UPDATE — server wins sur lignes propres
-        set_sql = ", ".join(f"{k} = ?" for k in values.keys())
-        params = [
-            *values.values(), SYNC_STATUS_SYNCED, ts, uuid,
-        ]
-        try:
-            conn.execute(
-                f"UPDATE {table} SET {set_sql}, sync_status = ?, last_synced_at = ? "
-                f"WHERE uuid = ?",
-                params,
-            )
-            conn.commit()
-            return "updated"
-        except Exception:
-            conn.rollback()
-            return "conflict"
+        ts = now_iso()
+        if cur is None:
+            # INSERT — la ligne n'existe pas localement
+            cols_list = ["uuid", *values.keys(), "sync_status", "last_synced_at"]
+            placeholders = ",".join("?" for _ in cols_list)
+            params = [uuid, *values.values(), SYNC_STATUS_SYNCED, ts]
+            try:
+                conn.execute(
+                    f"INSERT INTO {table} ({', '.join(cols_list)}) VALUES ({placeholders})",
+                    params,
+                )
+                return "inserted"
+            except Exception:
+                # Contraintes UNIQUE concurrentes (matricule, identifiant, etc.)
+                return "conflict"
+        else:
+            if cur["sync_status"] == "pending":
+                return "skipped_pending"
+            # UPDATE — server wins sur lignes propres
+            set_sql = ", ".join(f"{k} = ?" for k in values.keys())
+            params = [
+                *values.values(), SYNC_STATUS_SYNCED, ts, uuid,
+            ]
+            try:
+                conn.execute(
+                    f"UPDATE {table} SET {set_sql}, sync_status = ?, last_synced_at = ? "
+                    f"WHERE uuid = ?",
+                    params,
+                )
+                return "updated"
+            except Exception:
+                return "conflict"
 
 
+@serialized_sync
 def pull_all(batch: int = DEFAULT_BATCH, progress=None) -> dict:
     """Récupère les modifications côté serveur pour les tables admin.
 
@@ -310,8 +330,10 @@ def pull_all(batch: int = DEFAULT_BATCH, progress=None) -> dict:
     for table, columns in PULL_TABLES.items():
         tally = {"inserted": 0, "updated": 0, "skipped_pending": 0, "conflict": 0}
         since = settings_service.get_setting(_pull_since_key(table), "") or ""
+        after_uuid = settings_service.get_setting(_pull_since_key(table) + "_uuid", "") or ""
         while True:
-            params = {"table": table, "since": since, "limit": batch}
+            _check_cancelled()
+            params = {"table": table, "since": since, "since_uuid": after_uuid, "limit": batch}
             try:
                 resp = requests.get(
                     endpoint, params=params, headers=_headers(token), timeout=TIMEOUT
@@ -324,15 +346,34 @@ def pull_all(batch: int = DEFAULT_BATCH, progress=None) -> dict:
                 raise SyncError(
                     f"Le serveur a rejeté le pull de {table} ({resp.status_code}) : {resp.text[:200]}"
                 )
-            body = resp.json()
-            records = body.get("records") or []
+            try:
+                body = resp.json()
+            except ValueError as exc:
+                raise SyncError("Réponse de synchronisation invalide.") from exc
+            if not isinstance(body, dict) or not isinstance(body.get("records"), list):
+                raise SyncError("Réponse de synchronisation invalide.")
+            records = body["records"]
+            if any(not isinstance(rec, dict) for rec in records):
+                raise SyncError("Enregistrement de synchronisation invalide.")
+            blocked = False
             for rec in records:
                 outcome = _merge_pulled_record(table, columns, rec)
                 tally[outcome] = tally.get(outcome, 0) + 1
+                blocked = blocked or outcome in ("conflict", "skipped_pending")
+            if blocked:
+                # Rejouer cette page au prochain cycle, une fois les parents/éditions résolus.
+                break
             next_since = body.get("next_since") or since
             has_more = bool(body.get("has_more"))
+            next_uuid = body.get("next_uuid") or ""
+            if has_more and (next_since, next_uuid) == (since, after_uuid):
+                raise SyncError("Pagination de synchronisation bloquée.")
             if next_since:
-                settings_service.set_setting(_pull_since_key(table), next_since)
+                after_uuid = next_uuid
+                with db_transaction() as conn:
+                    for key, value in ((_pull_since_key(table), next_since),
+                                       (_pull_since_key(table) + "_uuid", after_uuid)):
+                        conn.execute("INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
                 since = next_since
             if progress:
                 progress(f"{table} : +{tally['inserted']} / ~{tally['updated']}")
@@ -343,6 +384,7 @@ def pull_all(batch: int = DEFAULT_BATCH, progress=None) -> dict:
     return summary
 
 
+@serialized_sync
 def sync_all(batch: int = DEFAULT_BATCH, progress=None) -> dict:
     """Synchro complète : push d'abord (sortant), puis pull (entrant).
 
@@ -354,6 +396,7 @@ def sync_all(batch: int = DEFAULT_BATCH, progress=None) -> dict:
     return {"pushed": push_summary, "pulled": pull_summary}
 
 
+@serialized_sync
 def push_all(batch: int = DEFAULT_BATCH, progress=None) -> dict:
     """Pousse tous les enregistrements en attente. Retourne un résumé par table.
 
@@ -372,6 +415,7 @@ def push_all(batch: int = DEFAULT_BATCH, progress=None) -> dict:
     for table, columns in PUSH_TABLES.items():
         sent = 0
         while True:
+            _check_cancelled()
             records = _collect_pending(table, columns, batch)
             if not records:
                 break
@@ -388,8 +432,14 @@ def push_all(batch: int = DEFAULT_BATCH, progress=None) -> dict:
                 raise SyncError(
                     f"Le serveur a rejeté {table} ({resp.status_code}) : {resp.text[:200]}"
                 )
+            try:
+                acknowledgement = resp.json()
+            except ValueError as exc:
+                raise SyncError("Réponse de synchronisation invalide.") from exc
+            if not isinstance(acknowledgement, dict) or acknowledgement.get("skipped", 0):
+                raise SyncError("Des lignes n'ont pas été acceptées par le serveur ; elles restent en attente.")
             uuids = [r["uuid"] for r in records]
-            _mark_synced(table, uuids)
+            _mark_synced(table, records)
             sent += len(uuids)
             if progress:
                 progress(f"{table} : {sent} envoyé(s)")

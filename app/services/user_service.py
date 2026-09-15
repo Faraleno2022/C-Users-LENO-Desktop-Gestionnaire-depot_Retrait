@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from app.config import DEFAULT_SUPER_ADMIN, ROLES
-from app.db.database import get_connection
+from app.db.database import get_connection, transaction as db_transaction
 from app.models.user import User
 from app.services import audit_service, auth_service
 from app.utils.helpers import new_uuid, now_iso
@@ -123,6 +123,7 @@ def create_user(
     return user
 
 
+@db_transaction()
 def update_user(
     user_id: int,
     nom_complet: Optional[str] = None,
@@ -137,9 +138,17 @@ def update_user(
     if role is not None and role not in ROLES:
         raise UserServiceError(f"Rôle invalide : {role}")
 
+    if user.role == "super_admin" and user.actif and (actif is False or (role is not None and role != "super_admin")):
+        others = get_connection().execute(
+            "SELECT COUNT(*) FROM users WHERE role='super_admin' AND actif=1 AND id != ?", (user_id,)
+        ).fetchone()[0]
+        if not others:
+            raise UserServiceError("Impossible de désactiver ou rétrograder le dernier super-administrateur actif.")
     fields = []
     params: list = []
     if nom_complet is not None:
+        if not nom_complet.strip():
+            raise UserServiceError("Le nom complet ne peut pas être vide.")
         fields.append("nom_complet = ?")
         params.append(nom_complet.strip())
     if matricule is not None:
@@ -201,6 +210,7 @@ def reset_password(user_id: int, new_password: str) -> None:
     )
 
 
+@db_transaction()
 def delete_user(user_id: int) -> None:
     user = get_user(user_id)
     if user is None:
@@ -209,13 +219,16 @@ def delete_user(user_id: int) -> None:
         # On vérifie qu'au moins un autre super-admin existe
         conn = get_connection()
         row = conn.execute(
-            "SELECT COUNT(*) AS n FROM users WHERE role = 'super_admin' AND id != ?",
+            "SELECT COUNT(*) AS n FROM users WHERE role = 'super_admin' AND actif = 1 AND id != ?",
             (user_id,),
         ).fetchone()
         if row["n"] == 0:
             raise UserServiceError("Impossible de supprimer le dernier super-administrateur.")
     conn = get_connection()
-    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.execute(
+        "UPDATE users SET actif=0, updated_at=?, sync_status='pending' WHERE id=?",
+        (now_iso(), user_id),
+    )
     conn.commit()
     actor = auth_service.current_user()
     audit_service.log_action(
