@@ -332,3 +332,14 @@ class ReconciliationRun(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     report = models.JSONField(default=dict)
     snapshot = models.JSONField(default=dict)
+
+
+class ReconciliationSnapshotChunk(models.Model):
+    """Sauvegarde métier par blocs bornés, jamais synchronisée vers les postes."""
+    run = models.ForeignKey(ReconciliationRun, on_delete=models.CASCADE, related_name='snapshot_chunks')
+    table_name = models.CharField(max_length=32)
+    sequence = models.PositiveIntegerField()
+    rows = models.JSONField(default=list)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['run', 'table_name', 'sequence'], name='unique_reconciliation_chunk')]

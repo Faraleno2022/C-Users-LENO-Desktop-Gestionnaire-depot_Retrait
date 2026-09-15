@@ -10,7 +10,7 @@ services:
     plan: free
     rootDir: server
     buildCommand: "bash build.sh"
-    startCommand: "gunicorn core.wsgi:application"
+    startCommand: "gunicorn --config gunicorn.conf.py core.wsgi:application"
     healthCheckPath: /
     envVars:
       - key: DATABASE_URL

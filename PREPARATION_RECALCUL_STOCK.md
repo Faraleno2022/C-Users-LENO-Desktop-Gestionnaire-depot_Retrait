@@ -4,7 +4,7 @@
 
 - Gestionnaire bureau : **1.1.3**.
 - Console Web locale : **1.0.27**.
-- Serveur du site : mêmes modèles et calculs, migration Django **0015_reconciliation**.
+- Serveur du site : mêmes modèles et calculs, migrations Django **0015_reconciliation** et **0016_reconciliation_snapshot_chunks**.
 
 ## Règle de stock
 
@@ -56,8 +56,11 @@ administrateur, après présentation du résultat.
 - Bureau : copie SQLite complète avant correction dans data/reconciliation ;
   rapport JSON et journal d'audit conservés.
 - Console locale : copie SQLite complète dans le dossier reconciliation des données.
-- Django, y compris PostgreSQL : instantané métier et valeurs avant/après conservés
-  dans ReconciliationRun, dans la même transaction que la correction.
+- PostgreSQL : instantané des tables métier concernées et du journal d’audit
+  conservé par blocs dans ReconciliationSnapshotChunk, rattachés à ReconciliationRun,
+  dans la même transaction que la correction. Les anciennes sauvegardes JSON restent lisibles.
+- SQLite : ReconciliationRun référence la copie complète créée avant correction ;
+  cette copie est conservée dans le dossier reconciliation, sans duplication intégrale en mémoire.
 - Une erreur annule toutes les modifications. Un second passage sur les mêmes
   données ne modifie plus les valeurs corrigées.
 
@@ -89,3 +92,22 @@ SQLite de sauvegarde, refus d'un plan périmé et annulation après erreur ; tes
 Django des rôles, du journal, des dates et des exports. Parcours de réparation
 vérifié dans le navigateur sur une base synthétique, et écran Qt contrôlé.
 Les installations existantes et les données de production n'ont pas été modifiées.
+
+## Correctif de l’erreur 502 du vérificateur
+
+Le diagnostic ne charge que les champs nécessaires au calcul et les audits
+liés aux inventaires. Les ventes sont indexées par produit, les audits par date,
+et les mouvements simultanés sont ordonnés sans parcours quadratique.
+Le détail des anciennes sauvegardes n’est plus chargé pour afficher leur date.
+
+Lors de l’application, les corrections d’une même ligne sont regroupées et les
+écritures SQL sont paramétrées et limitées à 200 lignes par lot (ou moins selon
+la limite SQLite). La sauvegarde PostgreSQL utilise des blocs de 500 lignes.
+La copie SQLite complète reste conservée avant toute correction. Le plan est
+revérifié sous verrou et toutes les écritures restent dans une seule transaction.
+
+Le fichier server/gunicorn.conf.py fixe un délai de 120 secondes par défaut,
+surchargeable par GUNICORN_TIMEOUT. Il est chargé depuis le répertoire server,
+y compris avec l’ancienne commande gunicorn core.wsgi:application. Cette marge
+accompagne les réductions du travail et de la mémoire nécessaires au recalcul.
+La migration 0016 doit être appliquée par le déploiement avant utilisation.

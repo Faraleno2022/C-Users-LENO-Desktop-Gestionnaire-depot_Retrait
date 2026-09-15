@@ -146,6 +146,26 @@ class EngineTests(unittest.TestCase):
         json.dumps(plan,allow_nan=False)
 
 
+    def test_large_simultaneous_chain_avoids_quadratic_scans(self):
+        from server.sync import reconciliation_engine as engine
+        n = 1500
+        rows = [dict(uuid=f'm-{n-i:04}', created_at='2026-09-01 08:00:00',
+                     type='sortie', quantite=1, stock_apres=n-i-1) for i in range(n)]
+        with patch.object(engine, '_delta', wraps=engine._delta) as delta:
+            ordered = engine._ordered_moves(list(reversed(rows)))
+        self.assertEqual(ordered, rows)
+        self.assertLessEqual(delta.call_count, n * 2)
+
+    def test_simultaneous_cycles_and_initial_priority_are_stable(self):
+        from server.sync.reconciliation_engine import _ordered_moves
+        def move(uuid, kind, q, after, **extra):
+            return dict(uuid=uuid, type=kind, quantite=q, stock_apres=after,
+                        created_at='2026-09-01 08:00:00', **extra)
+        rows = [move('a', 'sortie', 1, 1), move('b', 'entree', 1, 2),
+                move('z', 'entree', 10, 10, is_initial=True), move('c', 'sortie', 2, 8)]
+        self.assertEqual([m['uuid'] for m in _ordered_moves(rows)], ['z', 'c', 'a', 'b'])
+
+
 class DesktopRepairTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)

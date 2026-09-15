@@ -1841,7 +1841,7 @@ def reconciliation(request):
         response['Content-Disposition'] = 'attachment; filename="diagnostic_recalcul.json"'
         return response
     return render(request, 'web/reconciliation.html', {'plan': plan, 'token': plan_token(plan), 'error': error,
-        'latest': ReconciliationRun.objects.order_by('-created_at').first(), 'remote': _remote(request)})
+        'latest': ReconciliationRun.objects.order_by('-created_at').values('created_at').first(), 'remote': _remote(request)})
 
 
 @login_required(login_url="web:login")
