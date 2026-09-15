@@ -5,11 +5,12 @@ Un plan contient les valeurs avant/après et les cas impossibles à déduire.
 """
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from itertools import groupby
+from itertools import groupby, takewhile
 import math
+import heapq
 import hashlib
 import json
 
@@ -56,36 +57,69 @@ def _delta(row):
     return q if row["type"] == "entree" else -q
 
 
-def _ordered_moves(rows):
-    """Reconstitue les chaînes de soldes d'une même seconde si elles existent.
-
-    Le UUID départage les opérations simultanées ; jamais l'id local qui change
-    lors de la réplication. Une entrée initiale précède les sorties simultanées.
-    """
+def _ordered_moves(rows, stamp_key=stamp):
+    """Même ordre des soldes, sans reparcourir tout un groupe à chaque retrait."""
     result = []
-    rows = sorted(rows, key=lambda m: (stamp(m), str(m["uuid"])))
-    for _, group in groupby(rows, stamp):
-        remaining = list(group)
-        while remaining:
-            afters = {decimal(m["stock_apres"]) for m in remaining}
-            roots = [m for m in remaining if decimal(m["stock_apres"]) - _delta(m) not in afters]
-            candidates = roots or remaining
-            initial = [m for m in candidates if m.get("is_initial") or m.get("motif") == "Stock initial"]
-            move = min(initial or candidates, key=lambda m: str(m["uuid"]))
-            remaining.remove(move)
-            result.append(move)
+    dated = sorted(((stamp_key(m), str(m['uuid']), m) for m in rows), key=lambda item: item[:2])
+    for _, group in groupby(dated, key=lambda item: item[0]):
+        moves = [item[2] for item in group]
+        if len(moves) == 1:
+            result.extend(moves)
+            continue
+        after = [decimal(m['stock_apres']) for m in moves]
+        before = [value - _delta(m) for value, m in zip(after, moves)]
+        counts = Counter(after)
+        waiting = defaultdict(list)
+        priorities = []
+        roots = []
+        active = set(range(len(moves)))
+        for i, m in enumerate(moves):
+            waiting[before[i]].append(i)
+            key = (not (m.get('is_initial') or m.get('motif') == 'Stock initial'), str(m['uuid']), i)
+            priorities.append(key)
+            if before[i] not in counts:
+                roots.append(key)
+        all_moves = list(priorities)
+        heapq.heapify(all_moves)
+        heapq.heapify(roots)
+        while active:
+            while roots and roots[0][2] not in active:
+                heapq.heappop(roots)
+            while all_moves and all_moves[0][2] not in active:
+                heapq.heappop(all_moves)
+            _, _, i = heapq.heappop(roots if roots else all_moves)
+            active.remove(i)
+            result.append(moves[i])
+            counts[after[i]] -= 1
+            if not counts[after[i]]:
+                del counts[after[i]]
+                for unlocked in waiting[after[i]]:
+                    if unlocked in active:
+                        heapq.heappush(roots, priorities[unlocked])
     return result
 
 
 def build_plan(products, movements, transactions, sales, audit_logs=()):
+    dates = {}
+    def dated(row):
+        key = str(row.get('created_at') or '')
+        if key not in dates:
+            dates[key] = stamp(row)
+        return dates[key]
+
     plan = {"version": REPAIR_VERSION, "changes": [], "issues": [], "stocks": [], "balances": []}
-    products = [dict(p) for p in products]
+    products = [p if isinstance(p, dict) else dict(p) for p in products]
     movements = [dict(m) for m in movements]
-    sales = [dict(s) for s in sales]
-    transactions = [dict(t) for t in transactions]
+    sales = [s if isinstance(s, dict) else dict(s) for s in sales]
+    transactions = [t if isinstance(t, dict) else dict(t) for t in transactions]
     by_uuid = {p["uuid"]: p for p in products}
     by_id = {p["id"]: p for p in products}
     grouped = defaultdict(list)
+    sales_by_product = defaultdict(list)
+    for sale in sales:
+        product = by_uuid.get(sale.get('product_uuid')) if sale.get('product_uuid') else by_id.get(sale.get('product_id'))
+        if product is not None:
+            sales_by_product[product['uuid']].append(sale)
     invalid_products = set()
     for m in movements:
         p = by_uuid.get(m.get("product_uuid")) if m.get("product_uuid") else by_id.get(m.get("product_id"))
@@ -93,7 +127,7 @@ def build_plan(products, movements, transactions, sales, audit_logs=()):
             _issue(plan, "stock_movements", m, "Produit absent ; synchronisation complète nécessaire.")
             continue
         try:
-            stamp(m)
+            dated(m)
             _delta(m)
             decimal(m["stock_apres"])
         except (ValueError, KeyError):
@@ -113,13 +147,15 @@ def build_plan(products, movements, transactions, sales, audit_logs=()):
                     movement["_legacy_count"] = float(counted)
             except ValueError:
                 pass
+    movements_by_time = defaultdict(list)
+    for movement in movements:
+        if movement.get('stock_compte') is None:
+            movements_by_time[movement.get('created_at')].append(movement)
     for log in audit_logs:
         if log.get("action") != "inventory_adjust":
             continue
         details = str(log.get("details") or "")
-        for m in movements:
-            if m.get("stock_compte") is not None or m.get("created_at") != log.get("created_at"):
-                continue
+        for m in movements_by_time.get(log.get("created_at"), ()):
             marker = str(m.get("product_nom")) + ": "
             if marker in details:
                 segment = details.split(marker, 1)[1].split(";", 1)[0]
@@ -139,10 +175,10 @@ def build_plan(products, movements, transactions, sales, audit_logs=()):
                 label = str(movement.get("motif") or "").lower()
                 if ("inventaire" in label or "comptage" in label) and movement.get("stock_compte") is None and movement.get("_legacy_count") is None:
                     raise ValueError("Inventaire ancien sans comptage identifiable : vérifier le justificatif.")
-            rows = _ordered_moves(rows)
+            rows = _ordered_moves(rows, stamp_key=dated)
             initial_rows = [m for m in rows if m.get("is_initial") or
                             (m.get("motif") == "Stock initial" and m["type"] == "entree" and
-                             stamp(m) == stamp(rows[0]))]
+                             dated(m) == dated(rows[0]))]
             if len(initial_rows) > 1:
                 raise ValueError("Plusieurs stocks initiaux : inventaire nécessaire.")
             source = p.get("stock_initial_source") or ""
@@ -153,8 +189,8 @@ def build_plan(products, movements, transactions, sales, audit_logs=()):
             elif initial is not None and source != "solde_premier_mouvement":
                 initial = decimal(initial)
             elif rows:
-                first_time = stamp(rows[0])
-                first = [m for m in rows if stamp(m) == first_time]
+                first_time = dated(rows[0])
+                first = list(takewhile(lambda m: dated(m) == first_time, rows))
                 afters = {decimal(m["stock_apres"]) for m in first}
                 roots = {decimal(m["stock_apres"]) - _delta(m) for m in first
                          if decimal(m["stock_apres"]) - _delta(m) not in afters}
@@ -162,8 +198,7 @@ def build_plan(products, movements, transactions, sales, audit_logs=()):
                     raise ValueError("Stock initial indéterminé ; inventaire nécessaire.")
                 initial = roots.pop()
                 source = "solde_premier_mouvement"
-            elif not any(s.get("product_uuid") == p["uuid"] or
-                         (not s.get("product_uuid") and s.get("product_id") == p["id"]) for s in sales):
+            elif not sales_by_product[p['uuid']]:
                 initial = decimal(p["quantite_stock"])
                 source = "stock_sans_mouvement"
             else:
@@ -171,8 +206,7 @@ def build_plan(products, movements, transactions, sales, audit_logs=()):
             if initial < 0:
                 raise ValueError("Stock initial négatif : inventaire nécessaire.")
             # Une sortie absente peut signaler une synchronisation partielle.
-            product_sales = [sale for sale in sales if sale.get("product_uuid") == p["uuid"] or
-                             (not sale.get("product_uuid") and sale.get("product_id") == p["id"])]
+            product_sales = sales_by_product[p['uuid']]
             sale_quantities = sum((decimal(sale["quantite"]) for sale in product_sales), Decimal(0))
             sale_outputs = sum((decimal(m["quantite"]) for m in rows if m["type"] == "sortie"
                                 and (m.get("sale_id") is not None or str(m.get("motif") or "").startswith("Vente"))
@@ -227,7 +261,7 @@ def build_plan(products, movements, transactions, sales, audit_logs=()):
     for table, rows in (("transactions", transactions), ("sales", sales)):
         for row in rows:
             try:
-                date = stamp(row)
+                date = dated(row)
                 if table == "sales":
                     quantity, price = decimal(row["quantite"]), decimal(row["prix_unitaire"])
                     if quantity <= 0 or price < 0:

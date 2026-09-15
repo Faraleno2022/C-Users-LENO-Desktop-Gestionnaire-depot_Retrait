@@ -2,12 +2,14 @@
 import tempfile
 import uuid
 from pathlib import Path
+from unittest.mock import patch
+from django.test.utils import CaptureQueriesContext
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TransactionTestCase
 from django.urls import reverse
 from sync.models import Product, StockMovement, Sale, Transaction, RemoteUser, ReconciliationRun
-from sync.reconciliation import preview, apply_reconciliation
+from sync.reconciliation import preview, apply_reconciliation, iter_snapshot_rows
 from sync.reconciliation_engine import plan_token
 
 
@@ -35,7 +37,7 @@ class ReconciliationTests(TransactionTestCase):
         result=apply_reconciliation(plan_token(preview()),report_dir=self.folder.name)
         self.product.refresh_from_db();self.assertEqual(self.product.quantite_stock,5)
         run=ReconciliationRun.objects.get()
-        self.assertEqual(run.snapshot['products'][0]['quantite_stock'],7)
+        self.assertEqual(next(iter_snapshot_rows(run, 'products'))['quantite_stock'],7)
         if connection.vendor=='sqlite' and 'backup' in result:self.assertTrue(Path(result['backup']).exists())
         self.assertEqual(preview()['changes'],[])
         self.assertEqual(apply_reconciliation(plan_token(preview()))['changes'],[])
@@ -86,7 +88,9 @@ class ReconciliationTests(TransactionTestCase):
         self.product.refresh_from_db();self.assertEqual(self.product.quantite_stock,7)
 
     def test_report_get_is_read_only(self):
-        response=self.client.get(reverse('web:reconciliation'))
+        with patch.dict('os.environ', {'RENDER_GIT_COMMIT': 'a' * 40}):
+            response=self.client.get(reverse('web:reconciliation'))
+        self.assertEqual(response.headers['X-EMAB-Revision'], 'a' * 40)
         self.assertEqual(response.status_code,200)
         self.assertContains(response,'Sauvegarder et appliquer')
         self.assertEqual(ReconciliationRun.objects.count(),0)
@@ -106,3 +110,90 @@ class ReconciliationTests(TransactionTestCase):
         self.assertEqual(count.quantite,0)
         plan=preview()
         self.assertEqual(plan['stocks'][0]['closing'],7)
+
+    def test_preview_loads_only_calculation_fields_and_inventory_audits(self):
+        from sync.reconciliation import diagnostic_data, snapshot_data, _build
+        from sync.models import AuditLog
+        AuditLog.objects.create(uuid=str(uuid.uuid4()), action='unrelated', details='x' * 10000, created_at='2026-09-01 08:00:00')
+        AuditLog.objects.create(uuid=str(uuid.uuid4()), action='inventory_adjust', details='motif=Comptage', created_at='2026-09-01 08:00:00')
+        data = diagnostic_data()
+        self.assertNotIn('telephone', data['transactions'][0])
+        self.assertNotIn('agent_nom', data['sales'][0])
+        self.assertEqual(len(data['audit_logs']), 1)
+        self.assertEqual(_build(data), _build(snapshot_data()))
+
+    def test_report_page_does_not_load_previous_backup_or_report(self):
+        ReconciliationRun.objects.create(version='previous', report={'changes': ['x'] * 5000}, snapshot={'large': 'x' * 10000})
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(reverse('web:reconciliation'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Dernier recalcul')
+        previous_queries = [q['sql'] for q in queries if 'sync_reconciliationrun' in q['sql']]
+        self.assertTrue(previous_queries)
+        for query in previous_queries:
+            self.assertNotIn('"snapshot"', query)
+            self.assertNotIn('"report"', query)
+
+    def test_apply_batches_large_account_history_and_keeps_complete_snapshot(self):
+        Transaction.objects.bulk_create([Transaction(uuid=str(uuid.uuid4()), matricule='B', type='depot', montant=1,
+            solde_apres=-1, telephone='test-preserved', created_at='2026-09-01 10:00:00') for _ in range(600)])
+        token = plan_token(preview())
+        with CaptureQueriesContext(connection) as queries:
+            result = apply_reconciliation(token, report_dir=self.folder.name)
+        updates = [q['sql'] for q in queries if 'UPDATE "sync_transaction"' in q['sql']]
+        self.assertLessEqual(len(updates), 8)
+        self.assertEqual(sorted(Transaction.objects.filter(matricule='B').values_list('solde_apres', flat=True)), list(range(1, 601)))
+        run = ReconciliationRun.objects.get()
+        self.assertEqual(sum(row.get('telephone') == 'test-preserved' for row in iter_snapshot_rows(run, 'transactions')), 600)
+        self.assertEqual(preview()['changes'], [])
+        self.assertTrue(result['changes'])
+
+    def test_apply_merges_sale_amount_and_balance_corrections(self):
+        Sale.objects.filter(quantite=2).update(uuid='sale-a', montant_total=1)
+        Sale.objects.filter(quantite=3).update(uuid='sale-b', montant_total=1)
+        apply_reconciliation(plan_token(preview()), report_dir=self.folder.name)
+        self.assertEqual(sum(Sale.objects.values_list('montant_total', flat=True)), 500)
+        self.assertEqual(max(Sale.objects.values_list('solde_apres', flat=True)), 800)
+        self.assertEqual(preview()['changes'], [])
+
+    def test_bulk_failure_rolls_back_backup_and_all_changes(self):
+        token = plan_token(preview())
+        from sync import reconciliation
+        original = reconciliation._write_batch
+        def fail_after_write(table, *args):
+            result = original(table, *args)
+            if table == 'transactions':
+                raise RuntimeError('test failure')
+            return result
+        with patch.object(reconciliation, '_write_batch', side_effect=fail_after_write):
+            with self.assertRaises(RuntimeError):
+                apply_reconciliation(token, report_dir=self.folder.name)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.quantite_stock, 7)
+        self.assertEqual(Transaction.objects.get().solde_apres, 999)
+        self.assertEqual(ReconciliationRun.objects.count(), 0)
+
+    def test_chunk_snapshot_preserves_all_fields_and_rolls_back_on_failure(self):
+        from sync.reconciliation import _save_snapshot_chunks
+        from sync.models import ReconciliationSnapshotChunk
+        from django.db import transaction
+        Transaction.objects.bulk_create([Transaction(uuid=str(uuid.uuid4()), matricule='C', type='depot', montant=1, solde_apres=1, created_at='2026-09-01 10:00:00') for _ in range(600)])
+        run = ReconciliationRun.objects.create(version='chunk-test')
+        _save_snapshot_chunks(run)
+        self.assertEqual(run.snapshot['format'], 'chunks-v1')
+        self.assertEqual(run.snapshot['counts']['transactions'], 601)
+        self.assertEqual(run.snapshot_chunks.filter(table_name='transactions').count(), 2)
+        self.assertEqual(sum(1 for _ in iter_snapshot_rows(run, 'transactions')), 601)
+        self.assertEqual(next(iter_snapshot_rows(run, 'products'))['quantite_stock'], 7)
+        self.assertIn('telephone', next(iter_snapshot_rows(run, 'transactions')))
+        self.assertTrue(ReconciliationSnapshotChunk.objects.filter(run=run).exists())
+        with self.assertRaises(RuntimeError):
+            with transaction.atomic():
+                failed = ReconciliationRun.objects.create(version='rolled-back-chunks')
+                _save_snapshot_chunks(failed)
+                raise RuntimeError('test rollback')
+        self.assertFalse(ReconciliationRun.objects.filter(version='rolled-back-chunks').exists())
+
+    def test_old_json_snapshot_can_still_be_read(self):
+        run = ReconciliationRun.objects.create(version='legacy-json', snapshot={'products': [{'quantite_stock': 7}]})
+        self.assertEqual(list(iter_snapshot_rows(run, 'products')), [{'quantite_stock': 7}])

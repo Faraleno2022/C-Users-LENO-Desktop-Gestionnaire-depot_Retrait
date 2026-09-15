@@ -16,5 +16,5 @@ Une sauvegarde et le détail des valeurs avant/après sont conservés lors du re
 <button class="btn btn-primary" {% if not plan.changes %}disabled{% endif %}>Sauvegarder et appliquer ces recalculs</button>
 <a class="btn btn-outline-secondary" href="{% url 'web:reconciliation' %}">Actualiser le diagnostic</a>
 <a class="btn btn-outline-secondary" href="?export=json">Télécharger le diagnostic</a></form>
-{% if latest %}<p class="text-muted mt-3">Dernier recalcul : {{ latest.created_at }} · {{ latest.report.changes|length }} ligne(s) corrigée(s).</p>{% endif %}
+{% if latest %}<p class="text-muted mt-3">Dernier recalcul : {{ latest.created_at }}.</p>{% endif %}
 {% endblock %}
