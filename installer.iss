@@ -4,7 +4,7 @@
 
 #define MyAppName "EMAB Gestionnaire"
 #define MyAppPublisher "EMAB GROUP"
-#define MyAppVersion "1.1.4"
+#define MyAppVersion "1.1.5"
 #define MyAppExeName "EMAB-Gestionnaire.exe"
 
 [Setup]

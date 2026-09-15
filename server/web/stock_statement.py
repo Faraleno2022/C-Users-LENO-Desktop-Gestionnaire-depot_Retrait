@@ -1,5 +1,7 @@
 """Même formule pour l'état du stock et son journal, par produit et période."""
 from decimal import Decimal
+from collections import defaultdict
+from django.db.models import Q
 from sync.models import Product, StockMovement, Sale, AuditLog
 from sync.reconciliation_engine import build_plan, decimal
 
@@ -8,13 +10,31 @@ def statement(products, date_from='', date_to=''):
     products = [dict(p) for p in products]
     uuids = {p['uuid'] for p in products}
     ids = {p['id'] for p in products}
-    moves = [m for m in StockMovement.objects.order_by('created_at', 'uuid').values()
-             if m['product_uuid'] in uuids or (not m['product_uuid'] and m['product_id'] in ids)]
-    sales = [s for s in Sale.objects.order_by('uuid').values()
-             if s['product_uuid'] in uuids or (not s['product_uuid'] and s['product_id'] in ids)]
-    logs = list(AuditLog.objects.filter(action='inventory_adjust').values())
-    plan = build_plan(products, moves, [], sales, logs)
-    stock_map = {row['uuid']: row for row in plan['stocks']}
+    moves = list(StockMovement.objects.filter(
+        Q(product_uuid__in=uuids) | Q(product_uuid='', product_id__in=ids)
+    ).order_by('created_at', 'uuid').values())
+    grouped = defaultdict(list)
+    id_to_uuid = {p['id']: p['uuid'] for p in products}
+    for move in moves:
+        grouped[move['product_uuid'] or id_to_uuid.get(move['product_id'])].append(move)
+    # Un stock initial déjà établi ne doit plus dépendre des totaux historiques
+    # envoyés par un poste, ni du moment où arrive sa table des ventes.
+    known = [p for p in products if p.get('stock_initial') is not None]
+    legacy = [p for p in products if p.get('stock_initial') is None]
+    stock_map = {p['uuid']: {'initial': p['stock_initial'],
+        'source': p.get('stock_initial_source') or 'creation',
+        'initial_movements': [m['uuid'] for m in grouped[p['uuid']] if m['is_initial']]}
+        for p in known}
+    issues = []
+    if legacy:
+        legacy_uuids = {p['uuid'] for p in legacy}
+        legacy_ids = {p['id'] for p in legacy}
+        sales = list(Sale.objects.filter(Q(product_uuid__in=legacy_uuids) |
+                     Q(product_uuid='', product_id__in=legacy_ids)).values())
+        logs = list(AuditLog.objects.filter(action='inventory_adjust').values())
+        plan = build_plan(legacy, [m for key in legacy_uuids for m in grouped[key]], [], sales, logs)
+        stock_map.update({row['uuid']: row for row in plan['stocks']})
+        issues = plan['issues']
     rows = []
     for product in products:
         item = stock_map.get(product['uuid'])
@@ -32,10 +52,7 @@ def statement(products, date_from='', date_to=''):
                 entries += initial
         if date_to and created > date_to:
             opening = Decimal(0)
-        for movement in moves:
-            if movement.get('product_uuid') != product['uuid'] and not (
-                    not movement.get('product_uuid') and movement['product_id'] == product['id']):
-                continue
+        for movement in grouped[product['uuid']]:
             if movement['uuid'] in item['initial_movements']:
                 continue
             current = movement
@@ -59,4 +76,4 @@ def statement(products, date_from='', date_to=''):
             'closing': float(closing), 'recorded': product['quantite_stock'],
             'difference': difference,
             'source': item['source']})
-    return rows, [i for i in plan['issues'] if i['table'] in ('products', 'stock_movements')]
+    return rows, [i for i in issues if i['table'] in ('products', 'stock_movements')]

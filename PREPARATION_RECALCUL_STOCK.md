@@ -2,8 +2,8 @@
 
 ## Versions préparées
 
-- Gestionnaire bureau : **1.1.4**.
-- Console Web locale : **1.0.28**.
+- Gestionnaire bureau : **1.1.5**.
+- Console Web locale : **1.0.29**.
 - Serveur du site : mêmes modèles et calculs, migrations Django **0015_reconciliation** et **0016_reconciliation_snapshot_chunks**.
 
 ## Règle de stock
@@ -39,16 +39,19 @@ vente sont comptés une seule fois par leur mouvement de compensation.
 
 ## Utilisation
 
-1. Mettre le serveur et les postes à jour, puis terminer leur synchronisation.
-2. Ouvrir **Vérification / Recalcul** dans la console ou **Administration →
+1. Mettre le serveur et tous les postes à jour, puis terminer leur synchronisation.
+   Prévoir une courte pause des saisies pendant le diagnostic et son application.
+2. Pour un réseau connecté, effectuer le recalcul sur le serveur central, puis
+   synchroniser les postes. Pour une installation autonome, ouvrir **Vérification / Recalcul** dans la console ou **Administration →
    Vérifier et recalculer les stocks et les soldes** dans le Gestionnaire.
 3. Examiner les produits, valeurs avant/après et points nécessitant un inventaire.
 4. L'action **Sauvegarder et appliquer ces recalculs** applique exactement le plan
    examiné. Si les données ont changé entre-temps, le diagnostic doit être actualisé.
 
 La consultation du diagnostic ne modifie aucune donnée métier. Le recalcul
-historique n'est pas lancé automatiquement au démarrage, au déploiement ou à la
-synchronisation. Cette préparation fournit une application explicite par un
+historique complet n'est pas lancé automatiquement au démarrage ou au déploiement.
+À réception des mouvements synchronisés, les stocks des produits dont le stock
+initial est déjà établi sont entretenus à partir du journal reçu (voir ci-dessous). Cette préparation fournit une application explicite par un
 administrateur, après présentation du résultat.
 
 ## Sauvegarde et traçabilité
@@ -111,3 +114,31 @@ surchargeable par GUNICORN_TIMEOUT. Il est chargé depuis le répertoire server,
 y compris avec l’ancienne commande gunicorn core.wsgi:application. Cette marge
 accompagne les réductions du travail et de la mémoire nécessaires au recalcul.
 La migration 0016 doit être appliquée par le déploiement avant utilisation.
+
+
+## Synchronisation et exports — versions 1.1.5 / 1.0.29
+
+- Un total de stock absolu envoyé par un ancien poste ne remplace plus le stock
+  d'un produit dont le stock initial est établi. Le serveur calcule ce total depuis
+  le journal identifié par UUID, en incluant les mouvements archivés.
+- Un même mouvement reçu plusieurs fois ne déduit pas plusieurs fois sa quantité.
+  Les faits d'un mouvement déjà reçu sont conservés ; une annulation utilise un
+  nouveau mouvement compensateur. Les anciens échos ne défont pas un recalcul central.
+- Les mouvements reçus en retard remettent à jour les soldes suivants du produit.
+  Un comptage explicitement enregistré reste un point d'inventaire : son ajustement
+  est recalculé lorsque des opérations antérieures arrivent.
+- La console envoie toutes les tables avant de recevoir les totaux. Les bases
+  anciennes sans stock initial doivent encore passer par le diagnostic explicite.
+- Les modifications d'un stock initial déjà établi se font sur le serveur central,
+  avec diagnostic et sauvegarde ; elles ne s'imposent pas depuis un miroir local.
+- Le récapitulatif et le détail des mouvements sont lus dans un même instantané.
+  Les exports effectués à des heures différentes peuvent varier avec les ventes.
+- Excel reçoit des cellules numériques exactes, avec un format d'affichage GNF
+  pour les montants. Les références et matricules restent du texte. Le format
+  scientifique à six chiffres significatifs n'est plus utilisé pour les quantités.
+- L'inventaire affiche « À compter » et conserve des cases vides tant qu'aucune
+  quantité réelle n'est saisie. Un résultat théorique négatif ne vaut pas comptage zéro.
+
+Le logiciel ne peut pas déduire une quantité physique absente des justificatifs.
+Après mise à jour, vérifier les écarts restants, compter les articles concernés,
+puis enregistrer l'inventaire réel pour obtenir un ajustement traçable.

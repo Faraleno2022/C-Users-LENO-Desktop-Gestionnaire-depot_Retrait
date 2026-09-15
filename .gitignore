@@ -45,3 +45,6 @@ dist/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Private generated reports and physical inventory sheets
+outputs/

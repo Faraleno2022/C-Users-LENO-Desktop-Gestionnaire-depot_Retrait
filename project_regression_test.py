@@ -15,6 +15,19 @@ from openpyxl import load_workbook
 
 
 class ProjectRegressionTests(DatabaseTestCase):
+    def test_excel_preserves_large_quantities_money_and_identifiers(self):
+        from app.utils.report_values import report_number, report_money
+        path = Path(self.tmp.name) / 'precision.xlsx'
+        export_to_excel(path, 'Stock', ['Référence', 'Quantité', 'Montant'],
+            [['0012', report_number(1000007397), report_money(123456789.25)]])
+        workbook = load_workbook(path)
+        self.addCleanup(workbook.close)
+        sheet = workbook.active
+        self.assertEqual((sheet['A4'].value, sheet['A4'].data_type), ('0012', 's'))
+        self.assertEqual((sheet['B4'].value, sheet['B4'].data_type), (1000007397, 'n'))
+        self.assertEqual(sheet['C4'].value, 123456789.25)
+        self.assertIn('GNF', sheet['C4'].number_format)
+
     def setup_backup(self):
         folder = Path(self.tmp.name) / "backups"
         folder.mkdir(exist_ok=True)

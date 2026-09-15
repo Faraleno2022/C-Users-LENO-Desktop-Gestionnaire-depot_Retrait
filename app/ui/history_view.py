@@ -242,6 +242,10 @@ class HistoryView(QWidget):
             for col, val in enumerate(cells):
                 item = QTableWidgetItem(val)
                 self.table.setItem(row, col, item)
+            for column, amount in ((4, tx.montant if tx.type == 'depot' else None),
+                                   (5, tx.montant if tx.type == 'retrait' else None),
+                                   (6, tx.solde_apres)):
+                self.table.item(row, column).setData(Qt.UserRole, amount)
 
             if tx.type == "depot":
                 color = QColor("#dcfce7")
@@ -283,7 +287,11 @@ class HistoryView(QWidget):
     def _collect_export_rows(self):
         rows = []
         for r in range(self.table.rowCount()):
+            from app.utils.report_values import report_money
             row = [self.table.item(r, c).text() for c in range(self.table.columnCount())]
+            for column in (4, 5, 6):
+                amount = self.table.item(r, column).data(Qt.UserRole)
+                row[column] = report_money(amount) if amount is not None else ''
             rows.append(row)
         return rows
 

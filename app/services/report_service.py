@@ -7,7 +7,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from app.config import DATE_FMT, EXPORT_DIR
 from app.db.database import get_connection
-from app.utils.helpers import format_money
+from app.utils.report_values import report_money as format_money, report_number
 
 # NB : openpyxl/reportlab (via app.utils.exporters) coûtent ~2,5 s à importer.
 # Ils sont chargés paresseusement dans generate_report() pour ne pas ralentir
@@ -82,7 +82,7 @@ def fetch_sales_rows(date_from: str, date_to: str, agent_id: Optional[int] = Non
             r["created_at"],
             r["matricule"],
             r["product_nom"],
-            f"{r['quantite']:g}",
+            report_number(r["quantite"]),
             format_money(r["prix_unitaire"]),
             format_money(r["montant_total"]),
             format_money(r["solde_apres"]),
@@ -110,8 +110,8 @@ def fetch_stock_rows() -> List[Sequence]:
             r["reference"] or "",
             r["nom"],
             format_money(r["prix_unitaire"]),
-            f"{r['quantite_stock']:g}",
-            f"{r['seuil_alerte']:g}",
+            report_number(r["quantite_stock"]),
+            report_number(r["seuil_alerte"]),
             format_money(r["quantite_stock"] * r["prix_unitaire"]),
             statut,
         ])

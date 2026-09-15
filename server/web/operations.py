@@ -20,3 +20,18 @@ def operation_transaction():
             OperationLock.objects.get_or_create(pk=1)
             OperationLock.objects.filter(pk=1).update(id=F("id"))
         yield
+
+
+def snapshot_read(view):
+    """Même instant de lecture pour le récapitulatif et le détail d'un rapport."""
+    from functools import wraps
+    from django.db import connection
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        outer_transaction = connection.in_atomic_block
+        with transaction.atomic():
+            if connection.vendor == 'postgresql' and not outer_transaction:
+                with connection.cursor() as cursor:
+                    cursor.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+            return view(*args, **kwargs)
+    return wrapped

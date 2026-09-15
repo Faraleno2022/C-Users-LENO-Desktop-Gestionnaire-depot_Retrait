@@ -46,18 +46,7 @@ def year_period() -> Tuple[str, str]:
 
 # --- Formatters --------------------------------------------------------------
 
-def _fmt_money(v) -> str:
-    try:
-        return f"{float(v):,.0f} GNF".replace(",", " ")
-    except (TypeError, ValueError):
-        return "0 GNF"
-
-
-def _fmt_num(v) -> str:
-    try:
-        return f"{float(v):g}"
-    except (TypeError, ValueError):
-        return str(v or "")
+from web.report_values import report_money as _fmt_money, report_number as _fmt_num
 
 
 # --- Récupération des données -------------------------------------------------
@@ -212,8 +201,11 @@ def build_excel(title: str, headers: Sequence[str], rows: Sequence[Sequence]) ->
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center")
-    for row in rows:
-        ws.append(list(row))
+    for row_index, row in enumerate(rows, 4):
+        ws.append([getattr(value, 'numeric_value', value) for value in row])
+        for column, value in enumerate(row, 1):
+            if hasattr(value, 'number_format'):
+                ws.cell(row_index, column).number_format = value.number_format
     for cells in ws.iter_rows():
         for cell in cells:
             if cell.data_type == "f":
