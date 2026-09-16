@@ -88,6 +88,9 @@ class Product(SyncedModel):
     prix_achat = models.FloatField(default=0)
     stock_max = models.FloatField(default=0)
     emplacement = models.CharField(max_length=120, blank=True, default="")
+    # Faux pour un article vendu sans stock (plat servi, service rendu) : ni
+    # quantité, ni mouvement, ni recalcul.
+    suivi_stock = models.BooleanField(default=True)
     actif = models.BooleanField(default=True)
     created_at = models.CharField(max_length=32)
     updated_at = models.CharField(max_length=32)
@@ -315,7 +318,7 @@ TABLE_MODELS = {
         "reference", "nom", "description", "prix_unitaire", "quantite_stock",
         "seuil_alerte", "categorie", "unite", "prix_achat", "stock_max",
         "stock_initial", "stock_initial_source",
-        "emplacement", "actif", "created_at", "updated_at",
+        "emplacement", "suivi_stock", "actif", "created_at", "updated_at",
     ]),
     "stock_movements": (StockMovement, [
         "product_id", "product_uuid", "product_nom", "type", "quantite",

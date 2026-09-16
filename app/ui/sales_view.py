@@ -227,6 +227,8 @@ class SalesView(QWidget):
         p = self._selected_product()
         if p is None:
             self.stock_label.setText("Stock disponible : —")
+        elif not p.suivi_stock:
+            self.stock_label.setText("Sans suivi de stock : toujours disponible.")
         else:
             self.stock_label.setText(f"Stock disponible : {p.quantite_stock:g}")
         self._update_total()

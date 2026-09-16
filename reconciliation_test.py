@@ -174,6 +174,9 @@ class DesktopRepairTests(unittest.TestCase):
         self.dirs=patch.object(database,'ensure_directories',lambda:None);self.dirs.start();self.addCleanup(self.dirs.stop)
         database.close_connection();self.addCleanup(database.close_connection);database.init_database()
         conn=database.get_connection()
+        # Les plats livrés sans stock occupent des identifiants : ce scénario
+        # pose les siens, il part donc d'un catalogue vide.
+        conn.execute('DELETE FROM products')
         data=fixture()
         for table,rows in zip(('products','stock_movements','transactions','sales'),data):
             columns={r['name'] for r in conn.execute(f'PRAGMA table_info({table})')}

@@ -49,6 +49,7 @@ def create_product(
     prix_achat: float = 0,
     stock_max: float = 0,
     emplacement: str = "",
+    suivi_stock: bool = True,
 ) -> Product:
     nom = (nom or "").strip()
     if not nom:
@@ -69,6 +70,9 @@ def create_product(
         raise ProductError("Le prix d'achat doit être positif ou nul.")
     if quantite_initiale < 0:
         raise ProductError("La quantité initiale ne peut pas être négative.")
+    if not suivi_stock:
+        # Un article sans suivi n'a ni stock ni seuil à surveiller.
+        quantite_initiale = seuil_alerte = stock_max = 0
     if stock_max and seuil_alerte and stock_max < seuil_alerte:
         raise ProductError("Le stock maximum doit être supérieur au seuil d'alerte.")
 
@@ -77,8 +81,9 @@ def create_product(
         cur = conn.execute(
             """INSERT INTO products (uuid, reference, nom, description, categorie, unite,
                                     prix_achat, prix_unitaire, quantite_stock, seuil_alerte,
-                                    stock_max, emplacement, actif, created_at, updated_at, sync_status)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,'pending')""",
+                                    stock_max, emplacement, suivi_stock, actif, created_at,
+                                    updated_at, sync_status)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,'pending')""",
             (
                 new_uuid(),
                 reference or None,
@@ -92,6 +97,7 @@ def create_product(
                 float(seuil_alerte),
                 float(stock_max or 0),
                 (emplacement or "").strip() or None,
+                1 if suivi_stock else 0,
                 now,
                 now,
             ),
@@ -131,6 +137,7 @@ def update_product(
     prix_achat: Optional[float] = None,
     stock_max: Optional[float] = None,
     emplacement: Optional[str] = None,
+    suivi_stock: Optional[bool] = None,
 ) -> Product:
     product = get_product(product_id)
     if product is None:
@@ -182,6 +189,13 @@ def update_product(
     if actif is not None:
         fields.append("actif = ?")
         params.append(1 if actif else 0)
+    if suivi_stock is not None:
+        fields.append("suivi_stock = ?")
+        params.append(1 if suivi_stock else 0)
+        if not suivi_stock:
+            # Basculer un article en « sans stock » remet ses compteurs à zéro :
+            # sans mouvement, une quantité résiduelle ne voudrait plus rien dire.
+            fields.extend(["quantite_stock = 0", "seuil_alerte = 0", "stock_max = 0"])
     if not fields:
         return product
     fields.append("updated_at = ?")
@@ -267,10 +281,15 @@ def adjust_stock(product_id: int, type_: str, quantite: float, motif: str = "") 
     agent = auth_service.current_user()
     with db_transaction() as conn:
         row = conn.execute(
-            "SELECT nom, quantite_stock FROM products WHERE id = ?", (product_id,)
+            "SELECT nom, quantite_stock, suivi_stock FROM products WHERE id = ?", (product_id,)
         ).fetchone()
         if row is None:
             raise ProductError("Produit introuvable.")
+        if not row["suivi_stock"]:
+            raise ProductError(
+                f"« {row['nom']} » est vendu sans suivi de stock : "
+                "aucun mouvement de stock ne peut lui être appliqué."
+            )
         current = float(row["quantite_stock"])
         if type_ == "entree":
             new_stock = add(current, quantite)
@@ -329,7 +348,8 @@ def low_stock_products() -> List[Product]:
 def stock_value() -> float:
     conn = get_connection()
     row = conn.execute(
-        "SELECT COALESCE(SUM(quantite_stock * prix_unitaire), 0) AS v FROM products WHERE actif = 1"
+        "SELECT COALESCE(SUM(quantite_stock * prix_unitaire), 0) AS v "
+        "FROM products WHERE actif = 1 AND suivi_stock = 1"
     ).fetchone()
     return float(row["v"])
 
@@ -340,7 +360,7 @@ def stock_value_cost() -> float:
     row = conn.execute(
         "SELECT COALESCE(SUM(quantite_stock * "
         "CASE WHEN prix_achat > 0 THEN prix_achat ELSE prix_unitaire END), 0) AS v "
-        "FROM products WHERE actif = 1"
+        "FROM products WHERE actif = 1 AND suivi_stock = 1"
     ).fetchone()
     return float(row["v"])
 

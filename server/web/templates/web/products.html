@@ -58,16 +58,18 @@
       </thead>
       <tbody>
         {% for p in page_obj %}
-          <tr {% if p.quantite_stock <= p.seuil_alerte %}class="table-warning"{% endif %}>
+          <tr {% if p.suivi_stock and p.quantite_stock <= p.seuil_alerte %}class="table-warning"{% endif %}>
             <td>{{ p.reference|default:"—" }}</td>
             <td>{{ p.nom }}</td>
             <td class="text-end">{{ p.prix_unitaire|money }}</td>
-            <td class="text-end">{{ p.quantite_stock|num }}</td>
-            <td class="text-end">{{ p.seuil_alerte|num }}</td>
-            <td class="text-end">{{ p.valeur|money }}</td>
+            <td class="text-end">{% if p.suivi_stock %}{{ p.quantite_stock|num }}{% else %}—{% endif %}</td>
+            <td class="text-end">{% if p.suivi_stock %}{{ p.seuil_alerte|num }}{% else %}—{% endif %}</td>
+            <td class="text-end">{% if p.suivi_stock %}{{ p.valeur|money }}{% else %}—{% endif %}</td>
             <td>
               {% if not p.actif %}
                 <span class="badge bg-secondary">Inactif</span>
+              {% elif not p.suivi_stock %}
+                <span class="badge bg-info text-dark">Sans stock</span>
               {% elif p.quantite_stock <= p.seuil_alerte %}
                 <span class="badge bg-warning text-dark">Stock bas</span>
               {% else %}
@@ -76,9 +78,11 @@
             </td>
             {% if can_edit %}
               <td class="text-end">
+                {% if p.suivi_stock %}
                 <a href="{% url 'web:stock_adjust' p.pk %}" class="btn btn-sm btn-outline-success" title="Ajuster le stock">
                   <i class="bi bi-box-seam"></i>
                 </a>
+                {% endif %}
                 <a href="{% url 'web:product_edit' p.pk %}" class="btn btn-sm btn-outline-primary" title="Modifier">
                   <i class="bi bi-pencil"></i>
                 </a>

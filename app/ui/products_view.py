@@ -111,6 +111,13 @@ class ProductFormDialog(QDialog):
         layout.addRow("Stock maximum", self.stock_max_spin)
         layout.addRow("Emplacement", self.empl_edit)
 
+        self.suivi_combo = QComboBox()
+        self.suivi_combo.addItem("Suivi en stock (quantité décomptée)", True)
+        self.suivi_combo.addItem("Sans stock (plat servi, service rendu)", False)
+        self.suivi_combo.setCurrentIndex(0 if (product is None or product.suivi_stock) else 1)
+        self.suivi_combo.currentIndexChanged.connect(self._on_suivi_changed)
+        layout.addRow("Gestion du stock", self.suivi_combo)
+
         if product is None:
             self.qte_spin = QDoubleSpinBox()
             self.qte_spin.setMaximum(1_000_000)
@@ -123,6 +130,19 @@ class ProductFormDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
+        self._on_suivi_changed()
+
+    def _on_suivi_changed(self) -> None:
+        """Sans suivi, il n'y a ni quantité, ni seuil, ni stock maximum."""
+        suivi = bool(self.suivi_combo.currentData())
+        for widget in (self.seuil_spin, self.stock_max_spin):
+            widget.setEnabled(suivi)
+            if not suivi:
+                widget.setValue(0)
+        if self.qte_spin is not None:
+            self.qte_spin.setEnabled(suivi)
+            if not suivi:
+                self.qte_spin.setValue(0)
 
     def data(self) -> dict:
         return {
@@ -137,6 +157,7 @@ class ProductFormDialog(QDialog):
             "stock_max": self.stock_max_spin.value(),
             "emplacement": self.empl_edit.text().strip(),
             "quantite_initiale": self.qte_spin.value() if self.qte_spin else 0,
+            "suivi_stock": bool(self.suivi_combo.currentData()),
         }
 
 
@@ -274,7 +295,7 @@ class ProductsView(QWidget):
         for p in products:
             row = self.table.rowCount()
             self.table.insertRow(row)
-            valeur = p.quantite_stock * p.prix_unitaire
+            valeur = p.quantite_stock * p.prix_unitaire if p.suivi_stock else 0
             cells = [
                 str(p.id),
                 p.reference or "",
@@ -282,12 +303,13 @@ class ProductsView(QWidget):
                 p.categorie or "",
                 p.unite or "",
                 format_money(p.prix_unitaire),
-                f"{p.quantite_stock:g}",
-                f"{p.seuil_alerte:g}",
-                f"{p.stock_max:g}" if p.stock_max else "",
+                f"{p.quantite_stock:g}" if p.suivi_stock else "—",
+                f"{p.seuil_alerte:g}" if p.suivi_stock else "—",
+                (f"{p.stock_max:g}" if p.stock_max else "") if p.suivi_stock else "—",
                 p.emplacement or "",
-                format_money(valeur),
-                "Actif" if p.actif else "Inactif",
+                format_money(valeur) if p.suivi_stock else "—",
+                ("Actif" if p.actif else "Inactif")
+                + ("" if p.suivi_stock else " · sans stock"),
             ]
             for col, val in enumerate(cells):
                 self.table.setItem(row, col, QTableWidgetItem(val))
@@ -346,6 +368,7 @@ class ProductsView(QWidget):
                 description=d["description"], quantite_initiale=d["quantite_initiale"],
                 seuil_alerte=d["seuil_alerte"], categorie=d["categorie"], unite=d["unite"],
                 prix_achat=d["prix_achat"], stock_max=d["stock_max"], emplacement=d["emplacement"],
+                suivi_stock=d["suivi_stock"],
             )
         except product_service.ProductError as e:
             error(self, "Erreur", str(e))
@@ -370,6 +393,7 @@ class ProductsView(QWidget):
                 reference=d["reference"], description=d["description"],
                 seuil_alerte=d["seuil_alerte"], categorie=d["categorie"], unite=d["unite"],
                 prix_achat=d["prix_achat"], stock_max=d["stock_max"], emplacement=d["emplacement"],
+                suivi_stock=d["suivi_stock"],
             )
         except product_service.ProductError as e:
             error(self, "Erreur", str(e))
