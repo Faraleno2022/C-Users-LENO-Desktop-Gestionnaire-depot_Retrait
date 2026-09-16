@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from app.models.cash_entry import CashEntry
 from app.models.user import User
 from app.services import cash_service
+from app.ui.widgets.dialogs import access_denied
 from app.utils.helpers import format_money, parse_money
 from server.sync.business_rules import business_day
 
@@ -112,6 +113,8 @@ class CashView(QWidget):
         self.delete_btn = QPushButton("Annuler l'écriture sélectionnée")
         self.delete_btn.setProperty("class", "secondary")
         self.delete_btn.clicked.connect(self._delete_selected)
+        # Un profil agent saisit les écritures mais ne les retire pas.
+        self.delete_btn.setVisible(self.agent.is_admin())
         btn_row.addWidget(validate_btn)
         btn_row.addWidget(self.opening_btn)
         btn_row.addStretch()
@@ -218,6 +221,9 @@ class CashView(QWidget):
             self.on_changed()
 
     def _delete_selected(self) -> None:
+        if not self.agent.is_admin():
+            access_denied(self)
+            return
         entry_id, source = self._selected()
         if entry_id is None:
             QMessageBox.information(self, "Caisse", "Sélectionnez d'abord une écriture.")

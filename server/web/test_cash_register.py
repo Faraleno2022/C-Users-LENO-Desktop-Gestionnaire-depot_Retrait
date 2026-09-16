@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from sync.business_rules import business_day
-from sync.models import CashEntry, Sale, Transaction
+from sync.models import CashEntry, RemoteUser, Sale, Transaction
 from web.tests import StockAndBalanceTests
 from web.views import _cash_balance, _matricule_balance
 
@@ -107,6 +107,35 @@ class CashRegisterWebTests(TestCase):
             reverse("web:cash_entry_delete", args=[entry.pk]), follow=True)
         self.assertContains(response, "négatif")
         self.assertEqual(_cash_balance(), 200)
+
+    def become_agent(self):
+        """Bascule la session sur un profil agent, sans droit de suppression."""
+        remote = RemoteUser.objects.create(
+            uuid=str(uuid.uuid4()), identifiant="agent-caisse", nom_complet="Agent",
+            role="caissier", can_delete=False, created_at="now", updated_at="now")
+        session = self.client.session
+        session["remote_user"] = {"id": remote.id, "uuid": remote.uuid,
+                                  "role": "caissier", "identifiant": "agent-caisse"}
+        session.save()
+
+    def test_agent_profile_cannot_delete_a_cash_entry(self):
+        self.entry("entree", 1000, "Recette")
+        entry = CashEntry.objects.get(source="manuel")
+        self.become_agent()
+        response = self.client.post(reverse("web:cash_entry_delete", args=[entry.pk]))
+        self.assertEqual(response.status_code, 403)
+        entry.refresh_from_db()
+        self.assertFalse(entry.deleted)
+        self.assertEqual(_cash_balance(), 1000)
+
+    def test_agent_profile_still_records_entries_but_sees_no_cancel_button(self):
+        self.become_agent()
+        self.entry("entree", 500, "Recette du jour")
+        self.assertEqual(_cash_balance(), 500)
+        page = self.client.get(reverse("web:caisse"))
+        self.assertFalse(page.context["can_delete"])
+        self.assertNotIn("cash_entry_delete", page.content.decode())
+        self.assertNotIn(">Annuler<", page.content.decode())
 
     # --- Vente encaissée ----------------------------------------------------
 

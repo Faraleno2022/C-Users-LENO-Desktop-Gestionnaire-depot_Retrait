@@ -135,6 +135,23 @@ class CashRegisterTests(DatabaseTestCase):
         self.assertEqual([b["matricule"] for b in plan["balances"]], ["CLIENT"])
         self.assertEqual(plan["issues"], [])
 
+    def test_agent_profile_cannot_delete_a_cash_entry(self):
+        """Le journal doit rester vérifiable : seul un admin retire une écriture."""
+        from app.services import user_service
+        entry = cash.create_entry("Recette", self.agent, entree=1000)
+        for role in ("caissier", "superviseur"):
+            agent = user_service.create_user(
+                f"ag-{role}", "motdepasse", f"Agent {role}", role)
+            with self.assertRaisesRegex(cash.CashError, "réservée aux administrateurs"):
+                cash.delete_entry(entry.id, agent)
+            # L'agent peut toujours saisir.
+            self.assertEqual(cash.create_entry("Sortie", agent, sortie=10).sortie, 10)
+        self.assertEqual(cash.get_balance(), 980)
+        # Un administrateur, lui, peut retirer une écriture.
+        sortie = next(e for e in cash.list_entries() if e.sortie == 10)
+        cash.delete_entry(sortie.id, self.agent)
+        self.assertEqual(cash.get_balance(), 990)
+
     def test_report_labels_a_cash_sale(self):
         from app.services import report_service
         sales.create_sale("", self.product.id, 1, self.agent, mode_paiement="caisse")
