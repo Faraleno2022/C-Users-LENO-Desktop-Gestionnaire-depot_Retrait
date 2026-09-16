@@ -2,8 +2,8 @@
 
 ## Versions préparées
 
-- Gestionnaire bureau : **1.1.6**.
-- Console Web locale : **1.0.30**.
+- Gestionnaire bureau : **1.1.7**.
+- Console Web locale : **1.0.31**.
 - Serveur du site : mêmes modèles et calculs, migrations Django **0015_reconciliation** et **0016_reconciliation_snapshot_chunks**.
 
 ## Règle de stock
@@ -192,3 +192,8 @@ puis enregistrer l'inventaire réel pour obtenir un ajustement traçable.
   être supprimée seule : il faut annuler la vente.
 - Les ventes encaissées n'entrent dans aucun solde de matricule, ni dans le solde
   global des comptes clients, ni dans le recalcul des soldes.
+- **Annuler une écriture de caisse est réservé aux administrateurs.** Un profil
+  agent (caissier, superviseur) saisit les entrées et les sorties mais ne peut pas
+  les retirer : le journal doit rester vérifiable. Sur la Console Web, la règle
+  suit la permission de suppression déjà en place (admin, ou responsable dont le
+  droit a été activé) ; le bouton d'annulation n'apparaît pas sans ce droit.

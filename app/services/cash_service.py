@@ -204,7 +204,15 @@ def get_entry(entry_id: int) -> Optional[CashEntry]:
 
 
 def delete_entry(entry_id: int, agent: User) -> None:
-    """Annule une écriture manuelle. Les encaissements suivent leur vente."""
+    """Annule une écriture manuelle, réservée aux administrateurs.
+
+    Un profil agent (caissier, superviseur) saisit les écritures mais ne peut
+    pas les retirer : le journal de caisse doit rester vérifiable.
+    """
+    if agent is None or not agent.is_admin():
+        raise CashError(
+            "Annulation d'une écriture de caisse réservée aux administrateurs."
+        )
     with db_transaction() as conn:
         row = conn.execute(
             "SELECT source, entree, sortie, libelle, deleted FROM cash_entries WHERE id = ?",

@@ -876,6 +876,7 @@ def caisse(request):
         "solde": _cash_balance(),
         "total_entrees": total_entrees,
         "total_sorties": total_sorties,
+        "can_delete": _can_delete(_remote(request)),
         "has_opening": CashEntry.objects.filter(source="ouverture", deleted=False).exists(),
         "today": business_day(),
         "filters": {"date_from": date_from, "date_to": date_to},
@@ -942,6 +943,7 @@ def cash_entry_new(request):
 
 
 @login_required(login_url="web:login")
+@delete_required
 def cash_entry_delete(request, pk):
     """Annule une écriture manuelle. Les encaissements suivent leur vente."""
     entry = get_object_or_404(CashEntry, pk=pk, deleted=False)
