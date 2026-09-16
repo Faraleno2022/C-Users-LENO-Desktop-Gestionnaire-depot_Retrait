@@ -2,8 +2,8 @@
 
 ## Versions préparées
 
-- Gestionnaire bureau : **1.1.8**.
-- Console Web locale : **1.0.32**.
+- Gestionnaire bureau : **1.1.9**.
+- Console Web locale : **1.0.33**.
 - Serveur du site : mêmes modèles et calculs, migrations Django **0015_reconciliation** et **0016_reconciliation_snapshot_chunks**.
 
 ## Règle de stock

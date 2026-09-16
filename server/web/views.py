@@ -306,13 +306,34 @@ def sync_now(request):
     except (OSError, ValueError):
         pass
 
+    import logging
+    import requests as _requests
+    logger = logging.getLogger(__name__)
     try:
-        from sync.replicator import Replicator
+        from sync.replicator import Replicator, ReplicationError
         summary = Replicator(url, token, state_path).run_once()
-    except Exception as e:
+    except _requests.RequestException as e:
+        # Vraie panne de liaison : le serveur n'a pas répondu.
+        logger.warning("Synchronisation manuelle : serveur injoignable (%s)", e)
         return JsonResponse({
             "ok": False,
-            "message": f"Serveur en ligne injoignable ({type(e).__name__}). Vérifiez internet.",
+            "message": f"Serveur en ligne injoignable ({type(e).__name__}). "
+                       "Vérifiez internet.",
+        })
+    except ReplicationError as e:
+        # Le serveur a répondu mais a refusé quelque chose : le texte nomme la
+        # table et le code. L'écraser par « vérifiez internet » rendait toute
+        # recherche de cause impossible.
+        logger.warning("Synchronisation manuelle refusée : %s", e)
+        return JsonResponse({
+            "ok": False,
+            "message": f"Synchronisation refusée par le serveur : {e}",
+        })
+    except Exception as e:
+        logger.exception("Synchronisation manuelle : erreur inattendue")
+        return JsonResponse({
+            "ok": False,
+            "message": f"Échec de la synchronisation ({type(e).__name__}) : {e}",
         })
 
     received = sum(v["inserted"] + v["updated"] for v in summary.values())

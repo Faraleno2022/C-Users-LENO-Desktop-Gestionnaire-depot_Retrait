@@ -200,6 +200,24 @@ def _apply_post_migrations(conn) -> None:
         )
         conn.commit()
 
+    cur.execute("SELECT value FROM app_settings WHERE key = 'mig_zero_count_v1'")
+    if cur.fetchone() is None:
+        # Un comptage d'inventaire qui confirme le stock théorique produit un
+        # mouvement de quantité nulle. Le serveur n'accepte une quantité nulle
+        # que si la quantité comptée est renseignée : sans elle, il refusait le
+        # lot entier et toute la synchronisation restait bloquée. La quantité
+        # comptée d'un mouvement sans écart est le stock après mouvement.
+        cols = [r["name"] for r in cur.execute("PRAGMA table_info(stock_movements)").fetchall()]
+        if "stock_compte" in cols:
+            cur.execute(
+                "UPDATE stock_movements SET stock_compte = stock_apres, "
+                "sync_status = 'pending' WHERE quantite = 0 AND stock_compte IS NULL"
+            )
+        cur.execute(
+            "INSERT INTO app_settings(key, value) VALUES ('mig_zero_count_v1', '1')"
+        )
+        conn.commit()
+
     cur.execute("SELECT value FROM app_settings WHERE key = 'mig_stock_tracking_v1'")
     if cur.fetchone() is None:
         # Certains articles ne se comptent pas en stock (plats servis, services).

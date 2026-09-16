@@ -176,9 +176,14 @@ def create_entry(libelle: str, agent: User, entree=0, sortie=0,
 
 
 def record_sale(conn, sale_uuid: str, libelle: str, montant: float, agent: User) -> int:
-    """Encaisse une vente. Appelé dans la transaction de `sale_service`."""
-    return _insert(conn, date=business_day(), libelle=libelle, entree=montant,
-                   sortie=0, source="vente", agent=agent, sale_uuid=sale_uuid)
+    """Encaisse une vente. Appelé dans la transaction de `sale_service`.
+
+    Le libellé est écrêté à 255 caractères : SQLite l'accepterait plus long,
+    mais la colonne du serveur s'arrête là et le lot serait refusé au push.
+    """
+    return _insert(conn, date=business_day(), libelle=(libelle or "")[:255],
+                   entree=montant, sortie=0, source="vente", agent=agent,
+                   sale_uuid=sale_uuid)
 
 
 def cancel_sale_entry(conn, sale_uuid: str) -> None:
