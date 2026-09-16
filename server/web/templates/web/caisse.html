@@ -1,0 +1,113 @@
+{% extends "web/base.html" %}
+{% load money %}
+{% block title %}Caisse{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center mb-3">
+  <h1 class="h3 me-3 mb-0">Caisse</h1>
+  <span class="text-muted">
+    Solde : <strong>{{ solde|money }}</strong> · entrées {{ total_entrees|money }} · sorties {{ total_sorties|money }}
+  </span>
+</div>
+
+{% if not has_opening %}
+<div class="alert alert-info" role="alert">
+  La caisse n'a pas encore d'écriture d'ouverture. Saisissez le solde initial et la date
+  à laquelle la caisse a été lancée : le solde progressif partira de là.
+</div>
+{% endif %}
+
+<div class="filter-card mb-3">
+  <form method="post" action="{% url 'web:cash_entry_new' %}" class="row g-2 align-items-end">
+    {% csrf_token %}
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Date</label>
+      <input type="date" name="date" value="{{ today }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-6 col-md-4">
+      <label class="form-label small">Libellé *</label>
+      <input type="text" name="libelle" class="form-control form-control-sm"
+             placeholder="ex : versement à la banque" required>
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Montant *</label>
+      <input type="text" name="montant" class="form-control form-control-sm" placeholder="0" required>
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <label class="form-label small">Sens</label>
+      <select name="sens" class="form-select form-select-sm">
+        <option value="sortie">Sortie</option>
+        <option value="entree">Entrée</option>
+        {% if not has_opening %}<option value="ouverture">Solde initial</option>{% endif %}
+      </select>
+    </div>
+    <div class="col-sm-6 col-md-2">
+      <button type="submit" class="btn btn-sm btn-success w-100">Enregistrer</button>
+    </div>
+  </form>
+  <p class="text-muted small mb-0 mt-2">
+    Les ventes encaissées entrent automatiquement en caisse. Cette saisie sert aux
+    versements, achats et autres mouvements d'espèces.
+  </p>
+</div>
+
+<form method="get" class="filter-card mb-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-sm-6 col-md-3">
+      <label class="form-label small">Du</label>
+      <input type="date" name="date_from" value="{{ filters.date_from }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-6 col-md-3">
+      <label class="form-label small">Au</label>
+      <input type="date" name="date_to" value="{{ filters.date_to }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-6 col-md-3">
+      <button type="submit" class="btn btn-sm btn-primary">Filtrer</button>
+      <a href="{% url 'web:caisse' %}" class="btn btn-sm btn-outline-secondary">Réinitialiser</a>
+    </div>
+    <div class="col-sm-6 col-md-3 text-md-end">
+      <a href="?{{ request.GET.urlencode }}&export=xlsx" class="btn btn-sm btn-outline-success">Excel</a>
+      <a href="?{{ request.GET.urlencode }}&export=pdf" class="btn btn-sm btn-outline-danger">PDF</a>
+    </div>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table table-sm table-hover align-middle">
+    <thead>
+      <tr>
+        <th>Date</th><th>Libellé</th><th class="text-end">Entrées</th>
+        <th class="text-end">Sorties</th><th class="text-end">Solde progressif</th>
+        <th>Agent</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.entry.date }}</td>
+        <td>
+          {{ row.entry.libelle }}
+          {% if row.entry.source == "ouverture" %}<span class="badge bg-primary">ouverture</span>{% endif %}
+          {% if row.entry.source == "vente" %}<span class="badge bg-info text-dark">vente</span>{% endif %}
+        </td>
+        <td class="text-end">{% if row.entry.entree %}{{ row.entry.entree|money }}{% endif %}</td>
+        <td class="text-end">{% if row.entry.sortie %}{{ row.entry.sortie|money }}{% endif %}</td>
+        <td class="text-end"><strong>{{ row.solde|money }}</strong></td>
+        <td>{{ row.entry.agent_nom }}</td>
+        <td class="text-end">
+          {% if row.entry.source != "vente" %}
+          <form method="post" action="{% url 'web:cash_entry_delete' row.entry.pk %}"
+                onsubmit="return confirm('Annuler cette écriture ? Le solde progressif sera recalculé.');">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-danger">Annuler</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" class="text-center text-muted py-4">Aucune écriture pour le moment.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

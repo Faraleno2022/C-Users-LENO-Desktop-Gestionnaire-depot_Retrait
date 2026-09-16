@@ -2,8 +2,8 @@
 
 ## Versions préparées
 
-- Gestionnaire bureau : **1.1.5**.
-- Console Web locale : **1.0.29**.
+- Gestionnaire bureau : **1.1.6**.
+- Console Web locale : **1.0.30**.
 - Serveur du site : mêmes modèles et calculs, migrations Django **0015_reconciliation** et **0016_reconciliation_snapshot_chunks**.
 
 ## Règle de stock
@@ -35,7 +35,7 @@ vente sont comptés une seule fois par leur mouvement de compensation.
   dépôts actifs moins les retraits et ventes actifs.
 - Les données invalides, références absentes et historiques incomplets sont
   signalés. Aucun stock initial n'est ajusté artificiellement pour retrouver le
-  stock affiché. Un résultat négatif est signalé ; il n'est pas ramené à zéro.
+  stock affiché. Un stock négatif est signalé ; il n'est pas ramené à zéro.
 
 ## Utilisation
 
@@ -142,3 +142,53 @@ La migration 0016 doit être appliquée par le déploiement avant utilisation.
 Le logiciel ne peut pas déduire une quantité physique absente des justificatifs.
 Après mise à jour, vérifier les écarts restants, compter les articles concernés,
 puis enregistrer l'inventaire réel pour obtenir un ajustement traçable.
+
+
+## Ventes à crédit et plafond des dépôts
+
+- Une vente est autorisée sans dépôt préalable, et même si le client est déjà
+  débiteur. Son solde devient négatif : c'est sa dette. Le stock disponible reste
+  contrôlé et chaque vente produit son mouvement de sortie.
+- Les retraits en espèces restent limités au solde disponible.
+- Les dépôts actifs sont limités à **40 000 GNF cumulés par matricule et par jour**,
+  selon la journée civile en Guinée (UTC). Exemple : 30 000 + 10 000 acceptés,
+  puis tout supplément refusé. Les achats et retraits ne libèrent pas ce plafond.
+- La règle s'applique aux nouveaux dépôts et aux restaurations de dépôts annulés.
+  Une restauration est contrôlée sur le jour d'origine de l'encaissement.
+- Le contrôle fonctionne hors connexion sur chaque base locale. Deux postes
+  déconnectés peuvent chacun accepter un dépôt pour le même matricule : le total
+  global ne peut alors être garanti avant synchronisation.
+- La synchronisation conserve tous les encaissements réels et leurs UUID. Un
+  cumul supérieur au plafond déclenche une alerte avec matricule, date, total et
+  dépassement. Aucune somme n'est effacée ou réduite automatiquement.
+- Détails : **Dépôts / Retraits** sur le site et la Console Web ; voyant d'alerte
+  et résultat de synchronisation dans le Gestionnaire. Mettre tous les postes à
+  jour pour appliquer le même contrôle.
+- Les anciennes opérations restent conservées. Un solde client négatif n'est
+  plus signalé comme une erreur de calcul simplement parce qu'il est négatif.
+
+
+## Caisse
+
+- Une **caisse unique**, partagée par tous les postes et la Console Web. Son
+  journal comporte la date, le libellé, les entrées, les sorties et le solde
+  progressif.
+- Le solde progressif n'est pas stocké : il se recalcule en cumulant les lignes
+  actives triées par date, horodatage puis UUID. Deux postes hors connexion ne
+  peuvent donc pas inscrire deux soldes contradictoires — c'est la somme qui fait
+  foi. Une écriture antidatée se replace d'elle-même dans le cumul.
+- La caisse démarre par une **écriture d'ouverture** (« Solde initial ») portant
+  sa propre date. Une seule ouverture active est admise.
+- Au moment de la vente, choisir **Compte client (matricule)** ou **Caisse
+  (espèces)**. En caisse, il n'y a ni matricule ni téléphone : le stock est
+  décompté normalement, aucun compte client n'est mouvementé, et le montant entre
+  au journal sous le libellé « Vente — <produit> x<quantité> ». Le reçu indique
+  « Payé par : Caisse (espèces) ».
+- Les sorties (versement à la banque, achat, remise au propriétaire) se saisissent
+  dans la caisse elle-même. Une sortie supérieure au contenu du tiroir est
+  refusée, avec le montant disponible affiché.
+- Annuler une vente encaissée retire son encaissement et rend le stock ; la
+  restaurer depuis la corbeille le rétablit. Une ligne d'encaissement ne peut pas
+  être supprimée seule : il faut annuler la vente.
+- Les ventes encaissées n'entrent dans aucun solde de matricule, ni dans le solde
+  global des comptes clients, ni dans le recalcul des soldes.

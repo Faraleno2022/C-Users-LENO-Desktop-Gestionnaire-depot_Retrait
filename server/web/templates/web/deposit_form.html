@@ -11,6 +11,8 @@
       automatiquement. Renseignez ensuite le montant et validez — le solde est mis à jour.
     </p>
 
+    <div class="alert alert-info small">Dépôts : maximum <strong>40 000 GNF par matricule et par jour</strong>.
+      Les achats et retraits ne réduisent pas le cumul des dépôts de la journée.</div>
     {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
 
     <form method="post" class="card p-4 shadow-sm"
@@ -38,6 +40,10 @@
         <div class="d-flex justify-content-between">
           <span>Montant du dépôt</span>
           <strong id="balanceDepot" class="text-success">—</strong>
+        </div>
+        <div class="d-flex justify-content-between">
+          <span>Dépôts aujourd'hui / reste autorisé</span>
+          <strong id="dailyDepositAllowance">—</strong>
         </div>
         <hr class="my-2">
         <div class="d-flex justify-content-between">
@@ -74,6 +80,8 @@
         var telInput = document.getElementById('telephone');
         var montant = document.getElementById('montant');
         var clientBalance = null;
+        var depositedToday = 0;
+        var balanceRequest = 0;
 
         function fmt(n) { return Math.round(n).toLocaleString('fr-FR').replace(/,/g, ' '); }
         function money(n) { return fmt(n) + ' GNF'; }
@@ -86,12 +94,15 @@
           document.getElementById('balanceCurrent').textContent = money(clientBalance);
           document.getElementById('balanceDepot').textContent = dep > 0 ? '+ ' + money(dep) : '—';
           document.getElementById('balanceAfter').textContent = money(clientBalance + dep);
+          document.getElementById('dailyDepositAllowance').textContent =
+            money(depositedToday) + ' / ' + money(Math.max(0, 40000 - depositedToday));
         }
 
         var timer = null;
         var autoPhone = '';  // dernier téléphone rempli automatiquement
         function loadBalance() {
           var mat = matInput.value.trim();
+          var requestId = ++balanceRequest;
           if (!mat) {
             clientBalance = null;
             if (telInput.value === autoPhone) telInput.value = '';  // efface le tél. auto
@@ -104,7 +115,9 @@
           })
             .then(function (r) { return r.json(); })
             .then(function (d) {
+              if (requestId !== balanceRequest || matInput.value.trim() !== mat) return;
               clientBalance = d.balance;
+              depositedToday = d.daily_deposits || 0;
               var nom = document.getElementById('balanceClientNom');
               nom.textContent = d.found ? (d.nom ? '· ' + d.nom : '') : '· (matricule inconnu)';
               // Remplit/efface le téléphone seulement s'il est vide ou auto-rempli
@@ -115,10 +128,13 @@
               }
               refresh();
             })
-            .catch(function () { clientBalance = null; refresh(); });
+            .catch(function () { if (requestId === balanceRequest) { clientBalance = null; refresh(); } });
         }
 
         matInput.addEventListener('input', function () {
+          ++balanceRequest;
+          clientBalance = null;
+          refresh();
           clearTimeout(timer); timer = setTimeout(loadBalance, 350);
         });
         matInput.addEventListener('change', loadBalance);

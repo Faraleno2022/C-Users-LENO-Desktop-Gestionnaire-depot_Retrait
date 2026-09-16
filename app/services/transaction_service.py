@@ -9,8 +9,9 @@ from app.db.database import get_connection, transaction as db_transaction
 from app.models.transaction import Transaction
 from app.models.user import User
 from app.services import audit_service, auth_service
-from app.utils.helpers import new_uuid, now_iso
+from app.utils.helpers import new_uuid
 from app.utils.accounting import add, subtract, number
+from server.sync.business_rules import business_day, business_timestamp, check_daily_deposit, deposit_warnings, deposited_on_day
 
 
 class TransactionError(Exception):
@@ -26,8 +27,10 @@ def _balance(matricule: Optional[str] = None) -> float:
     tx = conn.execute(
         "SELECT type, montant FROM transactions WHERE deleted = 0" + clause, params
     ).fetchall()
+    # Une vente encaissée en caisse ne touche aucun compte client.
     sales = conn.execute(
-        "SELECT montant_total FROM sales WHERE deleted = 0" + clause, params
+        "SELECT montant_total FROM sales WHERE deleted = 0 AND mode_paiement <> 'caisse'"
+        + clause, params
     ).fetchall()
     return add(
         *(r["montant"] if r["type"] == "depot" else -r["montant"] for r in tx),
@@ -42,6 +45,27 @@ def get_global_balance() -> float:
 
 def get_matricule_balance(matricule: str) -> float:
     return _balance(matricule.strip())
+
+
+def deposits_on_day(matricule: str, day=None) -> float:
+    day = day or business_day()
+    rows = get_connection().execute(
+        "SELECT montant, created_at FROM transactions WHERE matricule=? AND type='depot' "
+        "AND deleted=0", (matricule.strip(),),
+    )
+    return deposited_on_day(rows, day)
+
+
+def get_deposit_warnings(since_day: Optional[str] = None):
+    sql = ("SELECT matricule, created_at, montant FROM transactions "
+           "WHERE type='depot' AND deleted=0")
+    params: Tuple[str, ...] = ()
+    if since_day:
+        # created_at est un texte « AAAA-MM-JJ hh:mm:ss » : l'ordre
+        # lexicographique est aussi l'ordre chronologique.
+        sql += " AND created_at >= ?"
+        params = (since_day,)
+    return deposit_warnings(get_connection().execute(sql, params))
 
 
 # --- Création ----------------------------------------------------------------
@@ -70,8 +94,13 @@ def create_transaction(
         raise TransactionError("Agent non identifié.")
 
     with db_transaction() as conn:
+        created_at = business_timestamp()
         current = get_matricule_balance(matricule)
         if type_ == "depot":
+            try:
+                check_daily_deposit(montant, deposits_on_day(matricule, business_day(created_at)))
+            except ValueError as exc:
+                raise TransactionError(str(exc)) from exc
             new_balance = add(current, montant)
         else:
             if montant > current:
@@ -96,7 +125,7 @@ def create_transaction(
                 getattr(agent, "uuid", None),
                 agent.nom_complet,
                 note or None,
-                now_iso(),
+                created_at,
                 "pending",
             ),
         )

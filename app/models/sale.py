@@ -20,6 +20,7 @@ class Sale:
     agent_nom: str
     note: Optional[str]
     created_at: str
+    mode_paiement: str = "compte"  # 'compte' (matricule) ou 'caisse' (espèces)
     sync_status: str = "pending"
     last_synced_at: Optional[str] = None
     deleted: bool = False
@@ -41,6 +42,8 @@ class Sale:
             agent_nom=row["agent_nom"],
             note=row["note"],
             created_at=row["created_at"],
+            # Une sauvegarde antérieure à la caisse n'a pas encore la colonne.
+            mode_paiement=(row["mode_paiement"] if "mode_paiement" in row.keys() else "compte"),
             sync_status=row["sync_status"],
             last_synced_at=row["last_synced_at"],
             deleted=bool(row["deleted"]),

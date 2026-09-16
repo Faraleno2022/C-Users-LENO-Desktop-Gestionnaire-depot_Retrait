@@ -34,7 +34,7 @@ from sync.models import TABLE_MODELS
 # Ordre de réplication : les tables référencées (users, products) d'abord.
 TABLE_ORDER = [
     "users", "products", "clients", "stock_movements",
-    "transactions", "sales", "audit_logs", "stock_entry_requests",
+    "transactions", "sales", "cash_entries", "audit_logs", "stock_entry_requests",
 ]
 
 BATCH = 200
@@ -231,4 +231,11 @@ class Replicator:
         for table in TABLE_ORDER:
             ins, upd = self._pull_table(table)
             summary[table].update(inserted=ins, updated=upd)
+        from sync.business_rules import recent_alert_floor
+        from sync.deposit_limits import get_deposit_warnings
+        # Ce cycle tourne toutes les quelques secondes : on ne relit que la
+        # fenêtre récente, l'historique complet restant visible sur la page.
+        warnings = get_deposit_warnings(since_day=recent_alert_floor())
+        if warnings:
+            summary["transactions"]["warnings"] = warnings
         return {table: counts for table, counts in summary.items() if any(counts.values())}

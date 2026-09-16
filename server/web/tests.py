@@ -122,16 +122,16 @@ class StockAndBalanceTests(TestCase):
         self.assertTrue(sale.deleted)
         self.assertEqual(_matricule_balance("MAT-1"), 10000)
 
-    def test_sale_restore_refuses_insufficient_balance(self):
+    def test_sale_restore_can_restore_credit_sale(self):
         self.withdraw([self.product.pk], [2])
         sale = Sale.objects.get()
         self.client.post(reverse("web:sale_delete", args=[sale.pk]))
         self.withdraw(amount="9900")
         self.client.post(reverse("web:sale_restore", args=[sale.pk]))
-        self.assert_stock(10)
+        self.assert_stock(8)
         sale.refresh_from_db()
-        self.assertTrue(sale.deleted)
-        self.assertEqual(_matricule_balance("MAT-1"), 100)
+        self.assertFalse(sale.deleted)
+        self.assertEqual(_matricule_balance("MAT-1"), -100)
 
     def test_initial_stock_creates_entry_movement(self):
         response = self.client.post(reverse("web:product_new"), {

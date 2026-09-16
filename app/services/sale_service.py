@@ -6,7 +6,7 @@ from typing import List, Optional
 from app.db.database import get_connection, transaction as db_transaction
 from app.models.sale import Sale
 from app.models.user import User
-from app.services import audit_service, auth_service, product_service, transaction_service
+from app.services import audit_service, auth_service, cash_service, product_service, transaction_service
 from app.utils.helpers import new_uuid, now_iso
 from app.utils.accounting import add, subtract, multiply, number
 
@@ -22,10 +22,18 @@ def create_sale(
     agent: User,
     telephone: str = "",
     note: str = "",
+    mode_paiement: str = "compte",
 ) -> Sale:
+    """Vend un produit, sur le compte d'un matricule ou encaissé en caisse."""
+    mode_paiement = (mode_paiement or "compte").strip().lower()
+    if mode_paiement not in ("compte", "caisse"):
+        raise SaleError("Mode de paiement inconnu : attendu « compte » ou « caisse ».")
     matricule = (matricule or "").strip()
     telephone = (telephone or "").strip()
-    if not matricule:
+    if mode_paiement == "caisse":
+        # Vente encaissée : le client paie comptant, aucun compte n'est mouvementé.
+        matricule, telephone = "", ""
+    elif not matricule:
         raise SaleError("Le matricule du client est obligatoire.")
     try:
         quantite = number(quantite)
@@ -57,26 +65,32 @@ def create_sale(
         if montant < 0:
             raise SaleError("Le prix du produit ne peut pas être négatif.")
 
-        balance = transaction_service.get_matricule_balance(matricule)
-        if montant > balance:
-            raise SaleError(
-                f"Solde insuffisant. Solde du client : {balance:.0f}, montant de l'achat : {montant:.0f}"
-            )
-        new_balance = subtract(balance, montant)
+        if mode_paiement == "caisse":
+            new_balance = 0.0
+        else:
+            balance = transaction_service.get_matricule_balance(matricule)
+            # Les ventes à crédit sont autorisées, même sans dépôt préalable.
+            new_balance = subtract(balance, montant)
 
+        sale_uuid = new_uuid()
         cur = conn.execute(
             """INSERT INTO sales
                (uuid, matricule, telephone, product_id, product_uuid, product_nom, quantite, prix_unitaire,
-                montant_total, solde_apres, agent_id, agent_uuid, agent_nom, note, created_at, sync_status, deleted)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',0)""",
+                montant_total, solde_apres, mode_paiement, agent_id, agent_uuid, agent_nom, note,
+                created_at, sync_status, deleted)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',0)""",
             (
-                new_uuid(), matricule, telephone or None, product_id, prow["uuid"], prow["nom"],
-                float(quantite), prix, montant, new_balance,
+                sale_uuid, matricule, telephone or None, product_id, prow["uuid"], prow["nom"],
+                float(quantite), prix, montant, new_balance, mode_paiement,
                 agent.id, getattr(agent, "uuid", None), agent.nom_complet,
                 note or None, now_iso(),
             ),
         )
         sale_id = cur.lastrowid
+        if mode_paiement == "caisse":
+            cash_service.record_sale(
+                conn, sale_uuid, f"Vente — {prow['nom']} x{quantite:g}", montant, agent,
+            )
 
         new_stock = subtract(stock, quantite)
         conn.execute(
@@ -91,7 +105,8 @@ def create_sale(
     audit_service.log_action(
         agent.id, agent.identifiant, "SALE_CREATE",
         target_type="sale", target_id=str(sale_id),
-        details=f"{prow['nom']} x{quantite:g} = {montant:.0f} (client {matricule})",
+        details=(f"{prow['nom']} x{quantite:g} = {montant:.0f} "
+                 + ("(encaissé en caisse)" if mode_paiement == "caisse" else f"(client {matricule})")),
     )
     return get_sale(sale_id)
 
@@ -114,6 +129,8 @@ def cancel_sale(sale_id: int) -> None:
         conn.execute(
             "UPDATE sales SET deleted = 1, sync_status = 'pending' WHERE id = ?", (sale_id,)
         )
+        if sale.mode_paiement == "caisse":
+            cash_service.cancel_sale_entry(conn, sale.uuid)
         prow = conn.execute(
             "SELECT nom, quantite_stock FROM products WHERE id = ?", (sale.product_id,)
         ).fetchone()

@@ -6,13 +6,64 @@ import json
 from django.test import TestCase
 from django.urls import reverse
 
-from sync.models import Client, Device, Sale, Transaction
+from sync.models import CashEntry, Client, Device, Sale, Transaction
 
 
 class SyncApiTests(TestCase):
     def setUp(self):
         self.device = Device.objects.create(name="Poste test")
         self.auth = {"HTTP_AUTHORIZATION": f"Device {self.device.token}"}
+
+    def push_transactions(self, records):
+        response = self.client.post(reverse("sync-push"),
+            data=json.dumps({"table": "transactions", "records": records}),
+            content_type="application/json", **self.auth)
+        self.assertEqual(response.status_code, 200)
+        return response.json()
+
+    def test_offline_deposits_over_limit_are_kept_and_reported_idempotently(self):
+        push = self.push_transactions
+        first = dict(uuid="offline-1", matricule="M", type="depot", montant=30000,
+                     created_at="2026-09-15 12:00:00", solde_apres=30000, deleted=False)
+        second = dict(first, uuid="offline-2")
+        self.assertEqual(push([first])["warnings"], [])
+        result = push([second])
+        self.assertEqual(result["warnings"][0]["total"], 60000)
+        self.assertEqual(result["warnings"][0]["excess"], 20000)
+        self.assertEqual(push([second])["warnings"], result["warnings"])
+        self.assertEqual(Transaction.objects.count(), 2)
+        self.assertEqual(sum(Transaction.objects.values_list("montant", flat=True)), 60000)
+        self.assertEqual(push([dict(second, deleted=True)])["warnings"], [])
+        self.assertEqual(Transaction.objects.count(), 2)
+
+    def test_long_outage_still_reports_the_day_that_was_pushed(self):
+        """La fenêtre d'alerte part de la journée poussée, pas de la date du jour."""
+        old = dict(uuid="vieux-1", matricule="M", type="depot", montant=30000,
+                   created_at="2025-03-04 09:00:00", solde_apres=30000, deleted=False)
+        self.assertEqual(self.push_transactions([old])["warnings"], [])
+        result = self.push_transactions([dict(old, uuid="vieux-2")])
+        self.assertEqual(result["warnings"][0]["day"], "2025-03-04")
+        self.assertEqual(result["warnings"][0]["excess"], 20000)
+
+    def test_cash_entries_travel_between_workstations(self):
+        """La caisse est partagée : un poste pousse, les autres reçoivent."""
+        record = dict(uuid="cash-1", date="2026-04-01", libelle="Solde initial",
+                      entree=100000, sortie=0, source="ouverture", sale_uuid="",
+                      created_at="2026-04-01 08:00:00.000001", deleted=False)
+        response = self.client.post(reverse("sync-push"),
+            data=json.dumps({"table": "cash_entries", "records": [record]}),
+            content_type="application/json", **self.auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], 1)
+        # Renvoyer le même enregistrement ne le duplique pas.
+        self.client.post(reverse("sync-push"),
+            data=json.dumps({"table": "cash_entries", "records": [record]}),
+            content_type="application/json", **self.auth)
+        self.assertEqual(CashEntry.objects.count(), 1)
+        pulled = self.client.get(reverse("sync-pull"),
+                                 {"table": "cash_entries"}, **self.auth).json()
+        self.assertEqual(pulled["records"][0]["libelle"], "Solde initial")
+        self.assertEqual(pulled["records"][0]["entree"], 100000)
 
     def test_ping_requires_token(self):
         resp = self.client.get(reverse("sync-ping"))

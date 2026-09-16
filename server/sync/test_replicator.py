@@ -4,7 +4,9 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 from django.test import TestCase
 from django.utils import timezone
-from sync.models import Product
+from sync.business_rules import RECENT_ALERT_DAYS, business_day, day_offset
+from sync.deposit_limits import get_deposit_warnings
+from sync.models import Product, Transaction
 from sync.replicator import Replicator, ReplicationError
 
 
@@ -78,3 +80,30 @@ class ReplicatorTests(TestCase):
                 self.rep._save_state()
         self.assertEqual(json.loads(self.path.read_text()), {"previous": "ok"})
         self.assertEqual(list(self.path.parent.iterdir()), [self.path])
+
+
+    def test_pull_reports_overlimit_deposits_without_rejecting_or_duplicating(self):
+        rows = [dict(uuid=f"deposit-{i}", matricule="M", type="depot", montant=30000,
+                     solde_apres=30000, created_at=f"{business_day()} 12:00:00") for i in range(2)]
+        original_pull = self.rep._pull_table
+        def pull(table):
+            return original_pull(table) if table == "transactions" else (0, 0)
+        with patch.object(self.rep, "_push_table", return_value=0), patch.object(self.rep, "_pull_table", side_effect=pull), patch("sync.replicator.requests.get", return_value=self.response({"records": rows})):
+            summary = self.rep.run_once()
+            again = self.rep.run_once()
+        self.assertEqual(summary["transactions"]["inserted"], 2)
+        self.assertEqual(summary["transactions"]["warnings"][0]["excess"], 20000)
+        self.assertEqual(again["transactions"]["warnings"], summary["transactions"]["warnings"])
+        self.assertEqual(Transaction.objects.count(), 2)
+
+    def test_cycle_alerts_stay_inside_the_recent_window(self):
+        """Le cycle tourne en continu : il ne relit pas tout l'historique."""
+        old_day = day_offset(business_day(), -(RECENT_ALERT_DAYS + 1))
+        for i in range(2):
+            Transaction.objects.create(uuid=f"ancien-{i}", matricule="M", type="depot",
+                                       montant=30000, solde_apres=30000,
+                                       created_at=f"{old_day} 12:00:00")
+        with patch.object(self.rep, "_push_table", return_value=0), patch.object(self.rep, "_pull_table", return_value=(0, 0)):
+            self.assertEqual(self.rep.run_once(), {})
+        # Le dépassement reste visible sur la page Dépôts / Retraits.
+        self.assertEqual(get_deposit_warnings()[0]["day"], old_day)

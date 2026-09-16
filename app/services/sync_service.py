@@ -14,6 +14,7 @@ Authentification : jeton par poste, en-tête `Authorization: Device <token>`.
 """
 from __future__ import annotations
 
+import json
 from typing import Dict, List, Optional
 from threading import RLock
 from functools import wraps
@@ -22,6 +23,7 @@ from app.config import SYNC_STATUS_SYNCED
 from app.db.database import get_connection, transaction as db_transaction
 from app.services import settings_service
 from app.utils.helpers import now_iso
+from server.sync.business_rules import recent_alert_floor
 
 try:
     import requests
@@ -68,12 +70,16 @@ PUSH_TABLES: Dict[str, List[str]] = {
     ],
     "sales": [
         "uuid", "matricule", "telephone", "product_id", "product_uuid", "product_nom",
-        "quantite", "prix_unitaire", "montant_total", "solde_apres",
+        "quantite", "prix_unitaire", "montant_total", "solde_apres", "mode_paiement",
         "agent_id", "agent_uuid", "agent_nom", "note", "created_at", "deleted",
     ],
     "clients": [
         "uuid", "matricule", "nom", "telephone", "note", "actif",
         "created_at", "updated_at",
+    ],
+    "cash_entries": [
+        "uuid", "date", "libelle", "entree", "sortie", "source", "sale_uuid",
+        "agent_id", "agent_uuid", "agent_nom", "created_at", "deleted",
     ],
     "audit_logs": [
         "uuid", "user_id", "user_uuid", "user_identifiant", "action",
@@ -117,8 +123,13 @@ PULL_TABLES: Dict[str, List[str]] = {
     # Ventes créées depuis le web.
     "sales": [
         "uuid", "matricule", "telephone", "product_id", "product_uuid", "product_nom",
-        "quantite", "prix_unitaire", "montant_total", "solde_apres",
+        "quantite", "prix_unitaire", "montant_total", "solde_apres", "mode_paiement",
         "agent_id", "agent_uuid", "agent_nom", "note", "created_at", "deleted",
+    ],
+    # Écritures de caisse saisies depuis la Console Web.
+    "cash_entries": [
+        "uuid", "date", "libelle", "entree", "sortie", "source", "sale_uuid",
+        "agent_id", "agent_uuid", "agent_nom", "created_at", "deleted",
     ],
     # Audit : pull pour récupérer les actions effectuées depuis le web.
     "audit_logs": [
@@ -142,6 +153,9 @@ _LOOKUP_TABLES = {
     "sales": [
         ("agent_uuid", "agent_id", "users", True),
         ("product_uuid", "product_id", "products", False),
+    ],
+    "cash_entries": [
+        ("agent_uuid", "agent_id", "users", True),
     ],
     "stock_movements": [
         ("agent_uuid", "agent_id", "users", True),  # tolère agent absent (mouvements anciens)
@@ -393,7 +407,13 @@ def sync_all(batch: int = DEFAULT_BATCH, progress=None) -> dict:
     """
     push_summary = push_all(batch=batch, progress=progress)
     pull_summary = pull_all(batch=batch, progress=progress)
-    return {"pushed": push_summary, "pulled": pull_summary}
+    from app.services.transaction_service import get_deposit_warnings
+    # Alertes bornées à la fenêtre récente : ce recalcul a lieu à chaque synchro.
+    warnings = get_deposit_warnings(recent_alert_floor())
+    settings_service.set_setting("sync.deposit_warnings", json.dumps(warnings, ensure_ascii=False))
+    if warnings and progress:
+        progress(f"{len(warnings)} dépassement(s) du plafond des dépôts à vérifier.")
+    return {"pushed": push_summary, "pulled": pull_summary, "warnings": warnings}
 
 
 @serialized_sync

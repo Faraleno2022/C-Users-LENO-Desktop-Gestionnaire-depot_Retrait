@@ -147,6 +147,7 @@ SCHEMA_STATEMENTS = [
         prix_unitaire REAL NOT NULL,
         montant_total REAL NOT NULL,
         solde_apres REAL NOT NULL,
+        mode_paiement TEXT NOT NULL DEFAULT 'compte',
         agent_id INTEGER,
         agent_uuid TEXT,
         agent_nom TEXT NOT NULL,
@@ -177,6 +178,30 @@ SCHEMA_STATEMENTS = [
         last_synced_at TEXT
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS cash_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid TEXT NOT NULL UNIQUE,
+        date TEXT NOT NULL,
+        libelle TEXT NOT NULL,
+        entree REAL NOT NULL DEFAULT 0 CHECK (entree >= 0),
+        sortie REAL NOT NULL DEFAULT 0 CHECK (sortie >= 0),
+        source TEXT NOT NULL DEFAULT 'manuel',
+        sale_uuid TEXT,
+        agent_id INTEGER,
+        agent_uuid TEXT,
+        agent_nom TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        last_synced_at TEXT,
+        deleted INTEGER NOT NULL DEFAULT 0,
+        CHECK ((entree > 0 AND sortie = 0) OR (sortie > 0 AND entree = 0)),
+        FOREIGN KEY (agent_id) REFERENCES users(id)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_cash_date ON cash_entries(date);",
+    "CREATE INDEX IF NOT EXISTS idx_cash_sale ON cash_entries(sale_uuid);",
+    "CREATE INDEX IF NOT EXISTS idx_cash_sync ON cash_entries(sync_status);",
     "CREATE INDEX IF NOT EXISTS idx_clients_matricule ON clients(matricule);",
     "CREATE INDEX IF NOT EXISTS idx_clients_nom ON clients(nom);",
     "CREATE INDEX IF NOT EXISTS idx_clients_sync ON clients(sync_status);",
