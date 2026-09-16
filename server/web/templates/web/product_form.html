@@ -82,6 +82,22 @@
                value="{{ product.emplacement|default:'' }}">
       </div>
 
+      <div class="mb-3">
+        <label class="form-label">Gestion du stock</label>
+        <select name="suivi_stock" class="form-select">
+          <option value="1" {% if not product or product.suivi_stock %}selected{% endif %}>
+            Suivi en stock (quantité décomptée à chaque vente)
+          </option>
+          <option value="0" {% if product and not product.suivi_stock %}selected{% endif %}>
+            Sans stock (plat servi, service rendu)
+          </option>
+        </select>
+        <small class="text-muted">
+          Sans stock : l'article se vend toujours, sans quantité, sans seuil d'alerte,
+          sans mouvement de stock et sans entrer dans l'inventaire ni le recalcul.
+        </small>
+      </div>
+
       {% if not product %}
       <div class="mb-3">
         <label class="form-label">Quantité initiale</label>

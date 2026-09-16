@@ -2,8 +2,8 @@
 
 ## Versions préparées
 
-- Gestionnaire bureau : **1.1.7**.
-- Console Web locale : **1.0.31**.
+- Gestionnaire bureau : **1.1.8**.
+- Console Web locale : **1.0.32**.
 - Serveur du site : mêmes modèles et calculs, migrations Django **0015_reconciliation** et **0016_reconciliation_snapshot_chunks**.
 
 ## Règle de stock
@@ -197,3 +197,29 @@ puis enregistrer l'inventaire réel pour obtenir un ajustement traçable.
   les retirer : le journal doit rester vérifiable. Sur la Console Web, la règle
   suit la permission de suppression déjà en place (admin, ou responsable dont le
   droit a été activé) ; le bouton d'annulation n'apparaît pas sans ce droit.
+
+
+## Articles vendus sans stock
+
+- Chaque article porte un mode de gestion : **suivi en stock** (par défaut) ou
+  **sans stock**. Un article sans stock se vend toujours : aucune quantité n'est
+  décomptée, aucun mouvement de stock n'est écrit, et la vente elle-même reste la
+  trace de l'opération.
+- Trois plats sont livrés dans ce mode : **Plat 5.000**, **Plat 10.000** et
+  **Plat 15.000**. À la mise à jour, un plat déjà présent au catalogue est
+  simplement basculé — la comparaison ignore la casse, les espaces et les points,
+  donc « PLAT 10 000 » est reconnu — et les plats absents sont créés avec leur
+  prix. Aucun doublon n'est produit, et la bascule ne s'exécute qu'une fois.
+- Un article sans stock n'a ni seuil d'alerte, ni stock maximum, ni valeur
+  d'inventaire. Il n'apparaît pas dans l'inventaire physique, n'entre pas dans la
+  valorisation du stock et n'est jamais signalé en rupture.
+- Aucun mouvement manuel ne peut lui être appliqué : ni entrée, ni sortie, ni
+  demande d'entrée de stock. La saisie est refusée avec un message explicite.
+- Le **recalcul du stock l'ignore entièrement** : sans stock initial ni mouvement,
+  il n'y a rien à reconstruire et aucun écart à signaler.
+- Basculer un article suivi vers « sans stock » remet sa quantité, son seuil et
+  son stock maximum à zéro : sans mouvement, une quantité résiduelle ne voudrait
+  plus rien dire. L'opération se fait sur la fiche article, depuis le poste ou la
+  Console Web.
+- Le mode se synchronise entre les postes et le serveur comme le reste de la fiche
+  article.

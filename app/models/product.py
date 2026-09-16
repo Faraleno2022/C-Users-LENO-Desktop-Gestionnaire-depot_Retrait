@@ -31,6 +31,7 @@ class Product:
     prix_achat: float = 0.0
     stock_max: float = 0.0
     emplacement: Optional[str] = None
+    suivi_stock: bool = True
     sync_status: str = "pending"
     last_synced_at: Optional[str] = None
 
@@ -53,17 +54,24 @@ class Product:
             prix_achat=_get(row, "prix_achat", 0.0) or 0.0,
             stock_max=_get(row, "stock_max", 0.0) or 0.0,
             emplacement=_get(row, "emplacement"),
+            # Une base pas encore migrée suit le stock de tous ses articles.
+            suivi_stock=bool(_get(row, "suivi_stock", 1)),
             sync_status=row["sync_status"],
             last_synced_at=row["last_synced_at"],
         )
 
     def en_alerte(self) -> bool:
-        """Stock au niveau du seuil d'alerte ou en dessous (rupture incluse)."""
-        return self.quantite_stock <= self.seuil_alerte
+        """Stock au niveau du seuil d'alerte ou en dessous (rupture incluse).
+
+        Un article sans suivi de stock n'est jamais en alerte : il n'a pas de
+        quantité à surveiller.
+        """
+        return self.suivi_stock and self.quantite_stock <= self.seuil_alerte
 
     def en_rupture(self) -> bool:
-        return self.quantite_stock <= 0
+        return self.suivi_stock and self.quantite_stock <= 0
 
     def en_surstock(self) -> bool:
         """Stock au-dessus de la limite maximale (si une limite est définie)."""
-        return self.stock_max > 0 and self.quantite_stock > self.stock_max
+        return (self.suivi_stock and self.stock_max > 0
+                and self.quantite_stock > self.stock_max)

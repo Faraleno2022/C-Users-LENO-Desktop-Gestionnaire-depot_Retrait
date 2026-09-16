@@ -96,6 +96,7 @@ SCHEMA_STATEMENTS = [
         seuil_alerte REAL NOT NULL DEFAULT 0,
         stock_max REAL NOT NULL DEFAULT 0,
         emplacement TEXT,
+        suivi_stock INTEGER NOT NULL DEFAULT 1,
         actif INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,

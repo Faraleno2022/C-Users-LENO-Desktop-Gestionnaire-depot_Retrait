@@ -200,6 +200,22 @@ def _apply_post_migrations(conn) -> None:
         )
         conn.commit()
 
+    cur.execute("SELECT value FROM app_settings WHERE key = 'mig_stock_tracking_v1'")
+    if cur.fetchone() is None:
+        # Certains articles ne se comptent pas en stock (plats servis, services).
+        # Les articles existants restent suivis ; les trois plats passent en
+        # « sans stock », et sont créés s'ils n'existent pas encore.
+        cols = [r["name"] for r in cur.execute("PRAGMA table_info(products)").fetchall()]
+        if "suivi_stock" not in cols:
+            cur.execute(
+                "ALTER TABLE products ADD COLUMN suivi_stock INTEGER NOT NULL DEFAULT 1"
+            )
+        _apply_untracked_plates(cur)
+        cur.execute(
+            "INSERT INTO app_settings(key, value) VALUES ('mig_stock_tracking_v1', '1')"
+        )
+        conn.commit()
+
     cur.execute("SELECT value FROM app_settings WHERE key = 'mig_cash_register_v1'")
     if cur.fetchone() is None:
         # Caisse : les ventes existantes sont toutes des ventes sur compte.
@@ -212,6 +228,43 @@ def _apply_post_migrations(conn) -> None:
             "INSERT INTO app_settings(key, value) VALUES ('mig_cash_register_v1', '1')"
         )
         conn.commit()
+
+
+# Plats servis sans stock : nom affiché et prix de vente.
+UNTRACKED_PLATES = (("Plat 5.000", 5000.0), ("Plat 10.000", 10000.0),
+                    ("Plat 15.000", 15000.0))
+
+
+def _plate_key(nom: str) -> str:
+    """Nom comparable : « Plat 5.000 », « plat 5000 » et « PLAT 5 000 » se valent."""
+    return "".join((nom or "").lower().split()).replace(".", "").replace(",", "")
+
+
+def _apply_untracked_plates(cur) -> None:
+    """Bascule les trois plats en « sans stock », en créant ceux qui manquent."""
+    import uuid as _uuid
+    from datetime import datetime
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    existing = {}
+    for row in cur.execute("SELECT id, nom FROM products").fetchall():
+        existing.setdefault(_plate_key(row["nom"]), row["id"])
+    for nom, prix in UNTRACKED_PLATES:
+        product_id = existing.get(_plate_key(nom))
+        if product_id is not None:
+            cur.execute(
+                "UPDATE products SET suivi_stock = 0, sync_status = 'pending', "
+                "updated_at = ? WHERE id = ?",
+                (now, product_id),
+            )
+            continue
+        cur.execute(
+            "INSERT INTO products (uuid, nom, prix_unitaire, quantite_stock, "
+            "stock_initial, stock_initial_source, seuil_alerte, stock_max, "
+            "suivi_stock, actif, created_at, updated_at, sync_status) "
+            "VALUES (?,?,?,0,0,'creation',0,0,0,1,?,?,'pending')",
+            (str(_uuid.uuid4()), nom, prix, now, now),
+        )
 
 
 def _allow_missing_agents(conn):

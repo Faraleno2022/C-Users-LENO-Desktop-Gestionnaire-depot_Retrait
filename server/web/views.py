@@ -537,7 +537,7 @@ def withdrawal_new(request):
                     if product is None:
                         raise ValueError("Un produit sélectionné est invalide ou inactif.")
                     stock = float(product.quantite_stock or 0)
-                    if quantite > stock:
+                    if product.suivi_stock and quantite > stock:
                         raise ValueError(
                             f"Stock insuffisant pour « {product.nom} » : "
                             f"{stock:g} disponible, {quantite:g} demandé."
@@ -614,18 +614,21 @@ def withdrawal_new(request):
                         )
                         if encaisse:
                             _record_cash_sale(sale, agent_id, agent_uuid, agent_nom)
-                        product.quantite_stock = new_stock
-                        product.updated_at = _iso_now()
-                        product.save()
-                        StockMovement.objects.create(
-                            uuid=str(uuid_mod.uuid4()),
-                            product_id=product.id, product_uuid=product.uuid,
-                            product_nom=product.nom,
-                            type="sortie", quantite=l["quantite"], stock_apres=new_stock,
-                            motif=f"Vente {matricule or 'caisse'}", sale_id=sale.id,
-                            agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
-                            created_at=_iso_now(),
-                        )
+                        # Un article sans suivi n'a ni quantité à décompter ni
+                        # mouvement à écrire : la vente reste la trace.
+                        if product.suivi_stock:
+                            product.quantite_stock = new_stock
+                            product.updated_at = _iso_now()
+                            product.save()
+                            StockMovement.objects.create(
+                                uuid=str(uuid_mod.uuid4()),
+                                product_id=product.id, product_uuid=product.uuid,
+                                product_nom=product.nom,
+                                type="sortie", quantite=l["quantite"], stock_apres=new_stock,
+                                motif=f"Vente {matricule or 'caisse'}", sale_id=sale.id,
+                                agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
+                                created_at=_iso_now(),
+                            )
                         if first_id is None:
                             first_id = sale.id
                     _log_audit(
@@ -1166,6 +1169,10 @@ def product_new(request):
                 qte = number(request.POST.get("quantite_stock") or 0)
                 if qte < 0 or prix_achat < 0 or seuil < 0 or stock_max < 0:
                     raise ValueError("Les prix et quantités doivent être positifs ou nuls.")
+                suivi_stock = request.POST.get("suivi_stock") != "0"
+                if not suivi_stock:
+                    # Sans suivi, il n'y a ni quantité ni seuil à surveiller.
+                    qte = seuil = stock_max = 0
                 now = _iso_now()
                 p = Product.objects.create(
                     uuid=str(uuid_mod.uuid4()),
@@ -1180,6 +1187,7 @@ def product_new(request):
                     seuil_alerte=seuil,
                     stock_max=stock_max,
                     emplacement=emplacement,
+                    suivi_stock=suivi_stock,
                     actif=True,
                     created_at=now,
                     updated_at=now,
@@ -1260,6 +1268,11 @@ def product_edit(request, pk):
             product.seuil_alerte = seuil
             product.stock_max = stock_max
             product.emplacement = _limit((request.POST.get("emplacement") or "").strip(), 120, "Emplacement")
+            product.suivi_stock = request.POST.get("suivi_stock") != "0"
+            if not product.suivi_stock:
+                # Basculer en « sans stock » remet les compteurs à zéro : sans
+                # mouvement, une quantité résiduelle ne voudrait plus rien dire.
+                product.quantite_stock = product.seuil_alerte = product.stock_max = 0
             product.actif = actif
             product.updated_at = _iso_now()
             product.save()
@@ -1291,6 +1304,11 @@ def stock_adjust(request, pk):
         try:
             with operation_transaction():
                 product = get_object_or_404(Product.objects.select_for_update(), pk=pk)
+                if not product.suivi_stock:
+                    raise ValueError(
+                        f"« {product.nom} » est vendu sans suivi de stock : "
+                        "aucun mouvement de stock ne peut lui être appliqué."
+                    )
                 type_ = (request.POST.get("type") or "").strip()
                 if type_ not in ("entree", "sortie"):
                     raise ValueError("Type de mouvement invalide.")
@@ -1409,6 +1427,11 @@ def stock_entry_request(request, pk):
     error = None
     if request.method == "POST":
         try:
+            if not product.suivi_stock:
+                raise ValueError(
+                    f"« {product.nom} » est vendu sans suivi de stock : "
+                    "il n'y a pas d'entrée de stock à demander."
+                )
             qte_raw = (request.POST.get("quantite") or "").strip().replace(" ", "")
             quantite = number(qte_raw)
             if quantite <= 0:
@@ -2062,7 +2085,8 @@ def inventory(request):
     on crée un mouvement d'ajustement (entrée si surplus, sortie si manque)
     et on aligne le stock du produit sur la valeur comptée.
     """
-    products = list(Product.objects.filter(actif=True).order_by("nom"))
+    # Un article sans suivi de stock n'a pas de quantité à compter.
+    products = list(Product.objects.filter(actif=True, suivi_stock=True).order_by("nom"))
     error = None
 
     if request.method == "POST":

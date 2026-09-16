@@ -46,7 +46,8 @@ def create_sale(
 
     with db_transaction() as conn:
         prow = conn.execute(
-            "SELECT id, uuid, nom, prix_unitaire, quantite_stock, actif FROM products WHERE id = ?",
+            "SELECT id, uuid, nom, prix_unitaire, quantite_stock, suivi_stock, actif "
+            "FROM products WHERE id = ?",
             (product_id,),
         ).fetchone()
         if prow is None:
@@ -54,8 +55,9 @@ def create_sale(
         if not prow["actif"]:
             raise SaleError("Ce produit est désactivé.")
 
+        suivi_stock = bool(prow["suivi_stock"])
         stock = float(prow["quantite_stock"])
-        if quantite > stock:
+        if suivi_stock and quantite > stock:
             raise SaleError(
                 f"Stock insuffisant pour « {prow['nom']} ». Disponible : {stock:g}, demandé : {quantite:g}"
             )
@@ -92,15 +94,18 @@ def create_sale(
                 conn, sale_uuid, f"Vente — {prow['nom']} x{quantite:g}", montant, agent,
             )
 
-        new_stock = subtract(stock, quantite)
-        conn.execute(
-            "UPDATE products SET quantite_stock = ?, updated_at = ?, sync_status = 'pending' WHERE id = ?",
-            (new_stock, now_iso(), product_id),
-        )
-        product_service._record_movement(
-            conn, product_id, prow["nom"], "sortie", quantite, new_stock,
-            motif="Vente", sale_id=sale_id, agent=agent,
-        )
+        if suivi_stock:
+            new_stock = subtract(stock, quantite)
+            conn.execute(
+                "UPDATE products SET quantite_stock = ?, updated_at = ?, sync_status = 'pending' WHERE id = ?",
+                (new_stock, now_iso(), product_id),
+            )
+            product_service._record_movement(
+                conn, product_id, prow["nom"], "sortie", quantite, new_stock,
+                motif="Vente", sale_id=sale_id, agent=agent,
+            )
+        # Un article sans suivi n'a ni quantité à décompter ni mouvement à écrire :
+        # la vente elle-même reste la trace de l'opération.
 
     audit_service.log_action(
         agent.id, agent.identifiant, "SALE_CREATE",
@@ -132,9 +137,10 @@ def cancel_sale(sale_id: int) -> None:
         if sale.mode_paiement == "caisse":
             cash_service.cancel_sale_entry(conn, sale.uuid)
         prow = conn.execute(
-            "SELECT nom, quantite_stock FROM products WHERE id = ?", (sale.product_id,)
+            "SELECT nom, quantite_stock, suivi_stock FROM products WHERE id = ?",
+            (sale.product_id,),
         ).fetchone()
-        if prow is not None:
+        if prow is not None and prow["suivi_stock"]:
             new_stock = add(prow["quantite_stock"], sale.quantite)
             conn.execute(
                 "UPDATE products SET quantite_stock = ?, updated_at = ?, sync_status = 'pending' WHERE id = ?",

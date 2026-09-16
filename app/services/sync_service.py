@@ -57,7 +57,7 @@ PUSH_TABLES: Dict[str, List[str]] = {
     "products": [
         "uuid", "reference", "nom", "description", "prix_unitaire",
         "quantite_stock", "stock_initial", "stock_initial_source", "seuil_alerte", "categorie", "unite", "prix_achat",
-        "stock_max", "emplacement", "actif", "created_at", "updated_at",
+        "stock_max", "emplacement", "suivi_stock", "actif", "created_at", "updated_at",
     ],
     "stock_movements": [
         "uuid", "product_id", "product_uuid", "product_nom", "type", "quantite",
@@ -101,7 +101,7 @@ PULL_TABLES: Dict[str, List[str]] = {
     "products": [
         "uuid", "reference", "nom", "description", "prix_unitaire",
         "quantite_stock", "stock_initial", "stock_initial_source", "seuil_alerte", "categorie", "unite", "prix_achat",
-        "stock_max", "emplacement", "actif", "created_at", "updated_at",
+        "stock_max", "emplacement", "suivi_stock", "actif", "created_at", "updated_at",
     ],
     "clients": [
         "uuid", "matricule", "nom", "telephone", "note", "actif",

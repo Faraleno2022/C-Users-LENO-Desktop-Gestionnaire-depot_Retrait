@@ -169,6 +169,10 @@ def build_plan(products, movements, transactions, sales, audit_logs=()):
     for p in products:
         if p["uuid"] in invalid_products:
             continue
+        if p.get("suivi_stock") is not None and not p["suivi_stock"]:
+            # Article vendu sans suivi de stock : il n'a ni stock initial ni
+            # mouvement, donc rien à recalculer et aucun écart à signaler.
+            continue
         rows = grouped[p["uuid"]]
         try:
             for movement in rows:
