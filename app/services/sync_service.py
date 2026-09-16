@@ -88,7 +88,10 @@ PUSH_TABLES: Dict[str, List[str]] = {
 }
 
 DEFAULT_BATCH = 200
-TIMEOUT = 20
+# Une page de 200 lignes tient d'ordinaire en quelques secondes, mais le serveur
+# en ligne dépasse parfois 20 s sous charge (mesuré sur l'historique réel). Un
+# abandon à 20 s faisait échouer toute la synchronisation sur ces pages-là.
+TIMEOUT = 90
 
 
 # Tables pull (serveur → poste). L'ordre importe : `users` doit précéder
