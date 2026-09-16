@@ -7,11 +7,10 @@
   <div class="col-12 col-lg-7">
     <h1 class="h3 mb-3"><i class="bi bi-arrow-up-circle text-danger"></i> Retrait / Vente de produits</h1>
 
-    <div class="alert alert-warning border-warning border-2 small">
-      <strong><i class="bi bi-exclamation-triangle"></i> Risque double-débit</strong> —
-      le solde affiché provient du <strong>serveur uniquement</strong>. Si le poste a
-      opéré hors-ligne sur ce matricule, le solde réel peut différer. Vérifiez au poste
-      et synchronisez avant de valider.
+    <div class="alert alert-info small">
+      Le solde affiché tient compte des opérations disponibles sur cette installation.
+      Les opérations des autres postes apparaissent après synchronisation.
+      Les ventes à crédit restent possibles hors connexion.
     </div>
 
     {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
@@ -20,7 +19,26 @@
           data-balance-url="{% url 'web:matricule_balance_api' %}">
       {% csrf_token %}
 
-      <div class="row g-2">
+      <div class="mb-3">
+        <label class="form-label">Payé par</label>
+        <div class="d-flex gap-3 flex-wrap">
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="mode_paiement" value="compte"
+                   id="modeCompte" checked>
+            <label class="form-check-label" for="modeCompte">Compte client (matricule)</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="mode_paiement" value="caisse"
+                   id="modeCaisse">
+            <label class="form-check-label" for="modeCaisse">Caisse (espèces)</label>
+          </div>
+        </div>
+        <div class="form-text" id="modeHint">
+          Le montant est débité du compte du matricule.
+        </div>
+      </div>
+
+      <div class="row g-2" id="clientFields">
         <div class="col-sm-6 mb-2">
           <label class="form-label">Matricule <span class="text-danger">*</span></label>
           <input type="text" name="matricule" id="matricule" value="{{ matricule_preview }}"
@@ -53,7 +71,8 @@
       <label class="form-label">Produits vendus / retirés</label>
       <p class="text-muted small mb-2">
         Chaque produit a son prix de vente. Le total se calcule automatiquement et
-        se déduit du solde du client. Laissez vide pour un retrait en espèces simple.
+        se déduit du solde du client. La vente à crédit est autorisée : le solde peut
+        devenir négatif, même sans dépôt préalable. Laissez vide pour un retrait en espèces simple.
       </p>
 
       <div class="table-responsive">
@@ -98,8 +117,8 @@
       <div class="form-check mb-3">
         <input type="checkbox" class="form-check-input" name="confirmed" value="1" id="confirmed" required>
         <label class="form-check-label" for="confirmed">
-          <strong>Je confirme avoir vérifié le solde réel avec le poste</strong> et accepte
-          le risque de réconciliation.
+          <strong>Je confirme les produits et le montant.</strong>
+          En cas de vente à crédit, le solde négatif représente la dette du client.
         </label>
       </div>
 
@@ -256,7 +275,31 @@
         montant.addEventListener('input', recompute);
 
         addRow();                 // une ligne au départ
-        if (matInput.value.trim()) loadBalance();   // précharge si matricule déjà présent
+        // --- Bascule compte client / caisse ---
+        // En caisse, il n'y a ni matricule ni solde client : la vente est
+        // encaissée et alimente directement le journal de caisse.
+        var clientFields = document.getElementById('clientFields');
+        var modeCaisse = document.getElementById('modeCaisse');
+        var modeCompte = document.getElementById('modeCompte');
+        var modeHint = document.getElementById('modeHint');
+        function applyMode() {
+          var cash = modeCaisse.checked;
+          clientFields.style.display = cash ? 'none' : '';
+          matInput.required = !cash;
+          if (cash) { matInput.value = ''; telInput.value = ''; }
+          var box = document.getElementById('balanceBox');
+          if (box && cash) box.style.display = 'none';
+          clientBalance = cash ? null : clientBalance;
+          modeHint.textContent = cash
+            ? "Vente encaissée : le montant entre en caisse, aucun compte n'est mouvementé. Au moins un produit est requis."
+            : 'Le montant est débité du compte du matricule.';
+          if (!cash && matInput.value.trim()) loadBalance();
+        }
+        modeCaisse.addEventListener('change', applyMode);
+        modeCompte.addEventListener('change', applyMode);
+        applyMode();
+
+        if (!modeCaisse.checked && matInput.value.trim()) loadBalance();   // précharge si matricule déjà présent
       })();
     </script>
   </div>

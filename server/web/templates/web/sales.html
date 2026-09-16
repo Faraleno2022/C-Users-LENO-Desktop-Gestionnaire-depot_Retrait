@@ -58,7 +58,7 @@
         {% for s in page_obj %}
           <tr>
             <td>{{ s.created_at }}</td>
-            <td>{{ s.matricule }}</td>
+            <td>{% if s.mode_paiement == "caisse" %}<span class="badge bg-warning text-dark">Caisse</span>{% else %}{{ s.matricule }}{% endif %}</td>
             <td>{{ s.product_nom }}</td>
             <td class="text-end">{{ s.quantite|num }}</td>
             <td class="text-end">{{ s.prix_unitaire|money }}</td>
@@ -68,7 +68,7 @@
             {% if can_delete %}
               <td class="text-end">
                 <form method="post" action="{% url 'web:sale_delete' s.pk %}" class="d-inline"
-                      onsubmit="return confirm('Envoyer cette vente ({{ s.product_nom }} — {{ s.matricule }}) à la corbeille ?\nLe stock sera rendu et le solde du client recalculé.');">
+                      onsubmit="return confirm('Envoyer cette vente ({{ s.product_nom }} — {% if s.mode_paiement == "caisse" %}caisse{% else %}{{ s.matricule }}{% endif %}) à la corbeille ?\nLe stock sera rendu{% if s.mode_paiement == "caisse" %} et l\'encaissement retiré de la caisse{% else %} et le solde du client recalculé{% endif %}.');">
                   {% csrf_token %}
                   <button type="submit" class="btn btn-sm btn-outline-danger" title="Supprimer (corbeille)">
                     <i class="bi bi-trash"></i>

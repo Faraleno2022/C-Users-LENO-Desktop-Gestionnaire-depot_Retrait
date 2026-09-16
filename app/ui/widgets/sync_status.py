@@ -1,6 +1,8 @@
 """Widget de statut de synchronisation (placeholder pour future API)."""
 from __future__ import annotations
 
+import json
+
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
@@ -28,6 +30,9 @@ class SyncStatusWidget(QWidget):
         layout.addWidget(self.pending_label)
         layout.addWidget(QLabel(" | "))
         layout.addWidget(self.synced_label)
+        self.deposit_alert_label = QLabel()
+        self.deposit_alert_label.setStyleSheet("color: #b45309; font-weight: bold")
+        layout.addWidget(self.deposit_alert_label)
         layout.addStretch()
 
         self.timer = QTimer(self)
@@ -36,6 +41,12 @@ class SyncStatusWidget(QWidget):
         self.refresh()
 
     def refresh(self) -> None:
+        try:
+            warnings = json.loads(settings_service.get_setting("sync.deposit_warnings", "[]") or "[]")
+        except (ValueError, TypeError):
+            warnings = []
+        self.deposit_alert_label.setText(f"⚠ {len(warnings)} dépassement(s) dépôts" if warnings else "")
+        self.deposit_alert_label.setToolTip("\n".join(w["message"] for w in warnings))
         try:
             counts = transaction_service.sync_status_counts()
         except Exception:

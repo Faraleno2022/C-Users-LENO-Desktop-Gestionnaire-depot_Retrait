@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.29"
+APP_VERSION = "1.0.30"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -116,6 +116,7 @@ def _replication_loop(data_dir: Path) -> None:
 
     state_path = data_dir / "render_sync_state.json"
     first_cycle = True
+    last_warnings = []
     while True:
         cfg = _read_render_config(data_dir)
         interval = max(3, int(cfg.get("interval_seconds") or 5))
@@ -129,7 +130,12 @@ def _replication_loop(data_dir: Path) -> None:
                     rep._save_state()
                     first_cycle = False
                 summary = rep.run_once()
-                if summary:
+                warnings = summary.get("transactions", {}).get("warnings", [])
+                if warnings != last_warnings:
+                    for warning in warnings:
+                        print(f"[Sync Render] Attention : {warning['message']}")
+                    last_warnings = warnings
+                if any(v["pushed"] or v["inserted"] or v["updated"] for v in summary.values()):
                     parts = ", ".join(
                         f"{t}: ↑{v['pushed']} ↓{v['inserted'] + v['updated']}"
                         for t, v in summary.items()

@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QButtonGroup,
+    QRadioButton,
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
@@ -27,11 +29,11 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.user import User
-from app.services import product_service, sale_service, transaction_service
+from app.services import cash_service, product_service, sale_service, transaction_service
 from app.utils.helpers import format_money
 
 
-SALE_COLS = ["ID", "Date", "Matricule", "Produit", "Qté", "Montant", "Solde après", "Agent"]
+SALE_COLS = ["ID", "Date", "Payé par", "Produit", "Qté", "Montant", "Solde après", "Agent"]
 
 
 class SalesView(QWidget):
@@ -66,6 +68,19 @@ class SalesView(QWidget):
         title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         fl.addWidget(title)
 
+        mode_box = QHBoxLayout()
+        self.compte_radio = QRadioButton("Compte client (matricule)")
+        self.caisse_radio = QRadioButton("Caisse (espèces)")
+        self.compte_radio.setChecked(True)
+        mode_group = QButtonGroup(self)
+        mode_group.addButton(self.compte_radio)
+        mode_group.addButton(self.caisse_radio)
+        self.compte_radio.toggled.connect(self._on_mode_changed)
+        mode_box.addWidget(self.compte_radio)
+        mode_box.addWidget(self.caisse_radio)
+        mode_box.addStretch()
+        fl.addLayout(mode_box)
+
         grid = QFormLayout()
         grid.setLabelAlignment(Qt.AlignLeft)
         grid.setSpacing(10)
@@ -90,8 +105,10 @@ class SalesView(QWidget):
         self.note_edit.setPlaceholderText("Note optionnelle")
 
         grid.addRow("Produit *", self.product_combo)
-        grid.addRow("Matricule client *", self.matricule_edit)
-        grid.addRow("Téléphone", self.telephone_edit)
+        self.matricule_label = QLabel("Matricule client *")
+        self.telephone_label = QLabel("Téléphone")
+        grid.addRow(self.matricule_label, self.matricule_edit)
+        grid.addRow(self.telephone_label, self.telephone_edit)
         grid.addRow("Quantité *", self.qte_spin)
         grid.addRow("Note", self.note_edit)
         fl.addLayout(grid)
@@ -103,6 +120,9 @@ class SalesView(QWidget):
         self.balance_label = QLabel("Solde du client : —")
         self.balance_label.setStyleSheet("color: #6b7280; font-weight: 600;")
         fl.addWidget(self.balance_label)
+        self.mode_hint = QLabel("Vente à crédit autorisée : le solde peut devenir négatif.")
+        self.mode_hint.setWordWrap(True)
+        fl.addWidget(self.mode_hint)
 
         self.total_label = QLabel("Montant total : —")
         self.total_label.setFont(QFont("Segoe UI", 13, QFont.Bold))
@@ -211,7 +231,31 @@ class SalesView(QWidget):
             self.stock_label.setText(f"Stock disponible : {p.quantite_stock:g}")
         self._update_total()
 
+    def _is_cash(self) -> bool:
+        return self.caisse_radio.isChecked()
+
+    def _on_mode_changed(self) -> None:
+        """Une vente encaissée n'a ni matricule ni compte à mouvementer."""
+        cash = self._is_cash()
+        for widget in (self.matricule_label, self.matricule_edit,
+                       self.telephone_label, self.telephone_edit):
+            widget.setVisible(not cash)
+        if cash:
+            self.balance_label.setText(
+                f"Solde de la caisse : {format_money(cash_service.get_balance())}")
+            self.mode_hint.setText(
+                "Vente encaissée : le montant entre directement en caisse, "
+                "aucun compte client n'est mouvementé.")
+        else:
+            self.mode_hint.setText(
+                "Vente à crédit autorisée : le solde peut devenir négatif.")
+            self._update_balance()
+
     def _update_balance(self) -> None:
+        if self._is_cash():
+            self.balance_label.setText(
+                f"Solde de la caisse : {format_money(cash_service.get_balance())}")
+            return
         matricule = self.matricule_edit.text().strip()
         if not matricule:
             self.balance_label.setText("Solde du client : —")
@@ -236,7 +280,7 @@ class SalesView(QWidget):
             cells = [
                 str(s.id),
                 s.created_at,
-                s.matricule,
+                "Caisse" if s.mode_paiement == "caisse" else s.matricule,
                 s.product_nom,
                 f"{s.quantite:g}",
                 format_money(s.montant_total),
@@ -252,8 +296,9 @@ class SalesView(QWidget):
         if p is None:
             QMessageBox.warning(self, "Champ requis", "Sélectionnez un produit.")
             return
-        matricule = self.matricule_edit.text().strip()
-        if not matricule:
+        cash = self._is_cash()
+        matricule = "" if cash else self.matricule_edit.text().strip()
+        if not cash and not matricule:
             QMessageBox.warning(self, "Champ requis", "Le matricule du client est obligatoire.")
             return
         try:
@@ -262,8 +307,9 @@ class SalesView(QWidget):
                 product_id=p.id,
                 quantite=self.qte_spin.value(),
                 agent=self.agent,
-                telephone=self.telephone_edit.text().strip(),
+                telephone="" if cash else self.telephone_edit.text().strip(),
                 note=self.note_edit.text().strip(),
+                mode_paiement="caisse" if cash else "compte",
             )
         except sale_service.SaleError as e:
             QMessageBox.warning(self, "Vente refusée", str(e))
@@ -283,6 +329,7 @@ class SalesView(QWidget):
         self.note_edit.clear()
         self.qte_spin.setValue(1)
         self.balance_label.setText("Solde du client : —")
+        self._on_mode_changed()
 
     # ------------------------------------------------------------- receipt
     def _empty_receipt_html(self) -> str:
@@ -294,6 +341,7 @@ class SalesView(QWidget):
         )
 
     def _show_receipt(self, sale) -> None:
+        cash = sale.mode_paiement == "caisse"
         html = f"""
         <div style='font-family:Segoe UI; padding: 6px;'>
           <div style='text-align:center; border-bottom: 2px dashed #cbd5e1; padding-bottom:10px;'>
@@ -304,10 +352,10 @@ class SalesView(QWidget):
             {sale.product_nom}<br>{format_money(sale.montant_total)}
           </div>
           <table style='width:100%; font-size:13px;' cellpadding='4'>
-            <tr><td><b>Matricule</b></td><td>{sale.matricule}</td></tr>
+            <tr><td><b>{'Payé par' if cash else 'Matricule'}</b></td><td>{'Caisse (espèces)' if cash else sale.matricule}</td></tr>
             <tr><td><b>Téléphone</b></td><td>{sale.telephone or '—'}</td></tr>
             <tr><td><b>Quantité</b></td><td>{sale.quantite:g} × {format_money(sale.prix_unitaire)}</td></tr>
-            <tr><td><b>Nouveau solde</b></td><td><b>{format_money(sale.solde_apres)}</b></td></tr>
+            <tr><td><b>{'Solde de la caisse' if cash else 'Nouveau solde'}</b></td><td><b>{format_money(cash_service.get_balance() if cash else sale.solde_apres)}</b></td></tr>
             <tr><td><b>Agent</b></td><td>{sale.agent_nom}</td></tr>
             <tr><td><b>Référence</b></td><td style='font-size:10px;'>{sale.uuid}</td></tr>
           </table>

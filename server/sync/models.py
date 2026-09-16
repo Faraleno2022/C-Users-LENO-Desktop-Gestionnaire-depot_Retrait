@@ -153,6 +153,7 @@ class Sale(SyncedModel):
     prix_unitaire = models.FloatField()
     montant_total = models.FloatField()
     solde_apres = models.FloatField()
+    mode_paiement = models.CharField(max_length=20, default="compte")
     agent_id = models.IntegerField(null=True, blank=True)
     agent_uuid = models.CharField(max_length=36, blank=True, default="")
     agent_nom = models.CharField(max_length=200, blank=True, default="")
@@ -165,6 +166,32 @@ class Sale(SyncedModel):
 
     def __str__(self) -> str:
         return f"{self.product_nom} x{self.quantite} — {self.matricule}"
+
+
+class CashEntry(SyncedModel):
+    """Écriture du journal de caisse (caisse unique, partagée par les postes).
+
+    Le solde progressif n'est pas stocké : il se recalcule en cumulant les
+    lignes actives triées par (date, created_at, uuid).
+    """
+
+    date = models.CharField(max_length=32, db_index=True)
+    libelle = models.CharField(max_length=255)
+    entree = models.FloatField(default=0)
+    sortie = models.FloatField(default=0)
+    source = models.CharField(max_length=20, default="manuel")
+    sale_uuid = models.CharField(max_length=36, blank=True, default="", db_index=True)
+    agent_id = models.IntegerField(null=True, blank=True)
+    agent_uuid = models.CharField(max_length=36, blank=True, default="")
+    agent_nom = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.CharField(max_length=32)
+    deleted = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "Écriture de caisse"
+
+    def __str__(self) -> str:
+        return f"{self.date} — {self.libelle}"
 
 
 class AuditLog(SyncedModel):
@@ -301,8 +328,12 @@ TABLE_MODELS = {
     ]),
     "sales": (Sale, [
         "matricule", "telephone", "product_id", "product_uuid", "product_nom",
-        "quantite", "prix_unitaire", "montant_total", "solde_apres",
+        "quantite", "prix_unitaire", "montant_total", "solde_apres", "mode_paiement",
         "agent_id", "agent_uuid", "agent_nom", "note", "created_at", "deleted",
+    ]),
+    "cash_entries": (CashEntry, [
+        "date", "libelle", "entree", "sortie", "source", "sale_uuid",
+        "agent_id", "agent_uuid", "agent_nom", "created_at", "deleted",
     ]),
     "clients": (Client, [
         "matricule", "nom", "telephone", "note", "actif", "created_at", "updated_at",

@@ -27,6 +27,7 @@ from app.ui.transactions_view import TransactionsView
 from app.ui.history_view import HistoryView
 from app.ui.products_view import ProductsView
 from app.ui.sales_view import SalesView
+from app.ui.cash_view import CashView
 from app.ui.clients_view import ClientsView
 from app.ui.users_view import UsersView
 from app.ui.admins_view import AdminsView
@@ -45,6 +46,7 @@ NAV_SECTIONS = [
     ("Opérations", [
         ("transactions", "Dépôt / Retrait", None, "#86efac"),
         ("sales", "Vente produit", None, "#67e8f9"),
+        ("cash", "Caisse", None, "#fcd34d"),
     ]),
     ("Historique", [
         ("history", "Historique", None, None),
@@ -160,6 +162,7 @@ class MainWindow(QMainWindow):
         self.views["dashboard"] = self.dashboard
         self.views["transactions"] = TransactionsView(self.user, on_changed=self._on_data_changed)
         self.views["sales"] = SalesView(self.user, on_changed=self._on_data_changed)
+        self.views["cash"] = CashView(self.user, on_changed=self._on_data_changed)
         self.views["products"] = ProductsView(self.user, on_changed=self._on_data_changed)
         self.views["clients"] = ClientsView(self.user, on_changed=self._on_data_changed)
         self.views["history"] = HistoryView(self.user)
@@ -268,6 +271,10 @@ class MainWindow(QMainWindow):
             self._refresh_views()
         else:
             self.statusBar().showMessage("Sync à jour", 2000)
+        if result.get("warnings"):
+            self.statusBar().showMessage(
+                f"Attention : {len(result['warnings'])} dépassement(s) du plafond des dépôts. "
+                "Détails dans le voyant d'alerte.", 15000)
         self.sync_widget.refresh()
 
     def _on_auto_sync_failed(self, msg: str) -> None:

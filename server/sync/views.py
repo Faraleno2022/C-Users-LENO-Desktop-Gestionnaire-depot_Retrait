@@ -14,6 +14,7 @@ from sync.auth import DeviceTokenAuthentication
 from web.operations import operation_transaction
 from rest_framework.response import Response
 
+from sync.business_rules import business_day, day_offset
 from sync.models import TABLE_MODELS
 from sync.stock_projection import protect_projection, refresh_stock
 
@@ -115,6 +116,8 @@ def push(request):
     try:
         with operation_transaction():
             affected_products = set()
+            affected_matricules = set()
+            affected_days = set()
             for record in records:
                 if not isinstance(record, dict):
                     raise ValueError("Chaque enregistrement doit être un objet.")
@@ -126,6 +129,19 @@ def push(request):
                     raise ValueError("UUID invalide.")
                 defaults = _coerce(model, record, allowed)
                 obj = model.objects.filter(uuid=uuid).first()
+                if table == 'transactions':
+                    affected_matricules.add(record.get('matricule', ''))
+                    if obj:
+                        affected_matricules.add(obj.matricule)
+                    # Un poste hors connexion peut pousser des dépôts antérieurs :
+                    # la fenêtre part de la plus ancienne journée touchée.
+                    for stamp in (record.get('created_at'), getattr(obj, 'created_at', None)):
+                        if not stamp:
+                            continue
+                        try:
+                            affected_days.add(business_day(stamp))
+                        except (TypeError, ValueError):
+                            continue
                 was_created = obj is None
                 if was_created:
                     obj = model.objects.create(uuid=uuid, device=device, **defaults)
@@ -149,11 +165,17 @@ def push(request):
                 else:
                     updated += 1
             refresh_stock(affected_products)
+            from sync.deposit_limits import get_deposit_warnings
+            warnings = (
+                get_deposit_warnings(affected_matricules,
+                                     since_day=day_offset(min(affected_days), -1))
+                if table == 'transactions' and affected_days else []
+            )
     except (ValueError, TypeError, OverflowError, ValidationError, IntegrityError) as exc:
         return Response({"detail": f"Lot rejeté : {exc}"}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(
-        {"table": table, "created": created, "updated": updated, "skipped": skipped},
+        {"table": table, "created": created, "updated": updated, "skipped": skipped, "warnings": warnings},
         status=status.HTTP_200_OK,
     )
 

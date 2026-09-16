@@ -422,6 +422,10 @@ class BackupView(QWidget):
             + (f"\nPush — {push_detail}" if push_detail else "")
             + (f"\nPull — {pull_detail}" if pull_detail else "")
         )
+        warnings = result.get("warnings", [])
+        if warnings:
+            msg += "\n\nDépassements à vérifier (encaissements conservés) :\n"
+            msg += "\n".join(w["message"] for w in warnings)
         info(self, "Synchronisation", msg)
         self._refresh_sync_status()
         if self.on_data_changed:

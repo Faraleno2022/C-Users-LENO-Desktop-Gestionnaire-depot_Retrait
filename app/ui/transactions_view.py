@@ -106,6 +106,9 @@ class TransactionsView(QWidget):
         self.balance_label = QLabel("Solde du matricule : —")
         self.balance_label.setStyleSheet("color: #6b7280; font-weight: 600;")
         form_layout.addWidget(self.balance_label)
+        self.deposit_limit_label = QLabel("Dépôts : maximum 40 000 GNF par matricule et par jour.")
+        self.deposit_limit_label.setWordWrap(True)
+        form_layout.addWidget(self.deposit_limit_label)
 
         agent_label = QLabel(f"Agent : <b>{self.agent.nom_complet}</b>")
         agent_label.setTextFormat(Qt.RichText)
@@ -165,9 +168,15 @@ class TransactionsView(QWidget):
         matricule = self.matricule_edit.text().strip()
         if not matricule:
             self.balance_label.setText("Solde du matricule : —")
+            self.deposit_limit_label.setText("Plafond des dépôts : 40 000 GNF par matricule et par jour.")
             return
         bal = transaction_service.get_matricule_balance(matricule)
         self.balance_label.setText(f"Solde de {matricule} : {format_money(bal)}")
+        deposited = transaction_service.deposits_on_day(matricule)
+        remaining = max(0, 40000 - deposited)
+        self.deposit_limit_label.setText(
+            f"Dépôts aujourd'hui : {format_money(deposited)} / 40 000 GNF. "
+            f"Reste autorisé : {format_money(remaining)}.")
 
     def _validate(self) -> None:
         matricule = self.matricule_edit.text().strip()

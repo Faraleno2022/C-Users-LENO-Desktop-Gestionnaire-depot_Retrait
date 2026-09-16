@@ -19,12 +19,17 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from sync.models import (
+    CashEntry,
     AuditLog, Client, Device, Product, RemoteUser, Sale, StockEntryRequest,
     StockMovement, Transaction,
 )
 from web import reports as web_reports
 from web.accounting import add, subtract, multiply, number
 from web.operations import operation_transaction, snapshot_read
+from sync.business_rules import (
+    business_day, business_timestamp, cash_running_balances, check_daily_deposit,
+    DAILY_DEPOSIT_LIMIT, deposited_on_day,
+)
 from web.reports import build_excel, build_pdf, _fmt_money, _fmt_num
 
 
@@ -318,7 +323,11 @@ def sync_now(request):
         "ok": True,
         "received": received,
         "sent": sent,
-        "message": f"Synchronisé : {received} reçu(s), {sent} envoyé(s).",
+        "warnings": summary.get("transactions", {}).get("warnings", []),
+        "message": f"Synchronisé : {received} reçu(s), {sent} envoyé(s)."
+            + (" Attention : " + str(len(summary["transactions"]["warnings"]))
+               + " dépassement(s) du plafond des dépôts. Consultez Dépôts / Retraits."
+               if summary.get("transactions", {}).get("warnings") else ""),
     })
 
 
@@ -345,11 +354,20 @@ def _paginate(request, qs, per_page=PAGE_SIZE):
 def _matricule_balance(matricule: str) -> float:
     """Solde courant côté serveur pour un matricule."""
     tx = Transaction.objects.filter(matricule=matricule.strip(), deleted=False)
-    sales = Sale.objects.filter(matricule=matricule.strip(), deleted=False)
+    # Une vente encaissée en caisse ne touche aucun compte client.
+    sales = Sale.objects.filter(matricule=matricule.strip(), deleted=False).exclude(
+        mode_paiement="caisse")
     return add(
         *(amount if kind == "depot" else -amount for kind, amount in tx.values_list("type", "montant")),
         *(-amount for amount in sales.values_list("montant_total", flat=True)),
     )
+
+
+def _daily_deposits(matricule, day=None, exclude_uuid=None):
+    qs = Transaction.objects.filter(matricule=matricule.strip(), type='depot', deleted=False)
+    if exclude_uuid:
+        qs = qs.exclude(uuid=exclude_uuid)
+    return deposited_on_day(qs.values('montant', 'created_at').iterator(), day or business_day())
 
 
 def _normalize_name(s: str) -> str:
@@ -393,6 +411,8 @@ def deposit_new(request):
                 if montant <= 0:
                     raise ValueError("Le montant doit être strictement positif.")
 
+                created_at = business_timestamp()
+                check_daily_deposit(montant, _daily_deposits(matricule, business_day(created_at)))
                 # Solde après opération côté serveur (snapshot à l'instant t).
                 current = _matricule_balance(matricule)
                 new_balance = add(current, montant)
@@ -415,7 +435,7 @@ def deposit_new(request):
                     agent_uuid=(agent.uuid if agent else ""),
                     agent_nom=(agent.nom_complet if agent else r.get("nom_complet") or ""),
                     note=note,
-                    created_at=_iso_now(),
+                    created_at=created_at,
                     deleted=False,
                 )
                 _log_audit(
@@ -454,7 +474,7 @@ def deposit_new(request):
 
 @login_required(login_url="web:login")
 def withdrawal_new(request):
-    """Créer un retrait depuis le web — opération risquée (avertissement explicite).
+    """Créer un retrait en espèces ou une vente à crédit.
 
     Risque : si le poste a fait des opérations sur ce matricule hors-ligne,
     le solde serveur ne les reflète pas, et le retrait pourrait amener le
@@ -475,16 +495,23 @@ def withdrawal_new(request):
     if request.method == "POST":
         try:
             with operation_transaction():
+                mode_paiement = (request.POST.get("mode_paiement") or "compte").strip()
+                if mode_paiement not in ("compte", "caisse"):
+                    raise ValueError("Mode de paiement inconnu.")
+                encaisse = mode_paiement == "caisse"
                 matricule = _limit((request.POST.get("matricule") or "").strip(), 80, "matricule")
-                if not matricule:
+                if encaisse:
+                    # Vente encaissée : le client paie comptant, sans compte.
+                    matricule = ""
+                elif not matricule:
                     raise ValueError("Le matricule est obligatoire.")
-                telephone = _limit((request.POST.get("telephone") or "").strip(), 40, "telephone")
+                telephone = "" if encaisse else _limit(
+                    (request.POST.get("telephone") or "").strip(), 40, "telephone")
                 note = _limit((request.POST.get("note") or "").strip(), 255, "note")
                 confirmed = request.POST.get("confirmed") == "1"
                 if not confirmed:
                     raise ValueError(
-                        "Vous devez confirmer avoir vérifié le solde réel avec le poste "
-                        "avant de valider un retrait en ligne."
+                        "Vous devez confirmer les produits et le montant avant de valider."
                     )
 
                 # --- Lignes de produits (optionnelles) ---
@@ -534,13 +561,20 @@ def withdrawal_new(request):
                         "Ajoutez au moins un produit ou saisissez un montant positif."
                     )
 
-                current = _matricule_balance(matricule)
-                if montant > current:
-                    raise ValueError(
-                        f"Solde insuffisant côté serveur : disponible {current:.0f} GNF, "
-                        f"demande {montant:.0f} GNF."
-                    )
-                new_balance = subtract(current, montant)
+                if encaisse:
+                    if not lines:
+                        raise ValueError(
+                            "Une vente encaissée doit porter sur au moins un produit."
+                        )
+                    current = new_balance = 0.0
+                else:
+                    current = _matricule_balance(matricule)
+                    if not lines and montant > current:
+                        raise ValueError(
+                            f"Solde insuffisant côté serveur : disponible {current:.0f} GNF, "
+                            f"demande {montant:.0f} GNF."
+                        )
+                    new_balance = subtract(current, montant)
 
                 agent = None
                 ident = r.get("identifiant")
@@ -565,7 +599,7 @@ def withdrawal_new(request):
                     first_id = None
                     for l in lines:
                         product = l["product"]
-                        running = subtract(running, l["total"])
+                        running = 0.0 if encaisse else subtract(running, l["total"])
                         new_stock = subtract(product.quantite_stock or 0, l["quantite"])
                         sale = Sale.objects.create(
                             uuid=str(uuid_mod.uuid4()),
@@ -574,9 +608,12 @@ def withdrawal_new(request):
                             product_nom=product.nom,
                             quantite=l["quantite"], prix_unitaire=l["prix"],
                             montant_total=l["total"], solde_apres=running,
+                            mode_paiement=mode_paiement,
                             agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
                             note=note, created_at=_iso_now(), deleted=False,
                         )
+                        if encaisse:
+                            _record_cash_sale(sale, agent_id, agent_uuid, agent_nom)
                         product.quantite_stock = new_stock
                         product.updated_at = _iso_now()
                         product.save()
@@ -585,7 +622,7 @@ def withdrawal_new(request):
                             product_id=product.id, product_uuid=product.uuid,
                             product_nom=product.nom,
                             type="sortie", quantite=l["quantite"], stock_apres=new_stock,
-                            motif=f"Vente {matricule}", sale_id=sale.id,
+                            motif=f"Vente {matricule or 'caisse'}", sale_id=sale.id,
                             agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
                             created_at=_iso_now(),
                         )
@@ -597,11 +634,18 @@ def withdrawal_new(request):
                         details=f"matricule={matricule} montant={montant:.0f} "
                                 f"solde_apres={new_balance:.0f} produits=[{detail}]",
                     )
-                    messages.success(
-                        request,
-                        f"Vente de {montant:,.0f} GNF enregistrée pour {matricule}. "
-                        f"Nouveau solde : {new_balance:,.0f} GNF.",
-                    )
+                    if encaisse:
+                        messages.success(
+                            request,
+                            f"Vente encaissée de {montant:,.0f} GNF. "
+                            f"Solde de la caisse : {_cash_balance():,.0f} GNF.",
+                        )
+                    else:
+                        messages.success(
+                            request,
+                            f"Vente de {montant:,.0f} GNF enregistrée pour {matricule}. "
+                            f"Nouveau solde : {new_balance:,.0f} GNF.",
+                        )
                     receipt_id, receipt_at = first_id, _iso_now()
                 else:
                     tx = Transaction.objects.create(
@@ -684,10 +728,13 @@ def matricule_balance_api(request):
     found = (
         client is not None
         or Transaction.objects.filter(matricule=matricule, deleted=False).exists()
+        or Sale.objects.filter(matricule=matricule, deleted=False).exists()
     )
     return JsonResponse({
         "matricule": matricule,
         "balance": balance,
+        "daily_deposits": _daily_deposits(matricule),
+        "daily_deposit_limit": float(DAILY_DEPOSIT_LIMIT),
         "found": found,
         "nom": client.nom if client else "",
         "telephone": telephone,
@@ -768,6 +815,153 @@ def sale_new(request):
     return redirect("web:withdrawal_new")
 
 
+# --- Caisse ------------------------------------------------------------------
+
+def _cash_journal():
+    """Journal complet : [(écriture, solde progressif)], du plus ancien au plus récent."""
+    entries = list(CashEntry.objects.filter(deleted=False))
+    rows = [{"date": e.date, "created_at": e.created_at, "uuid": e.uuid,
+             "entree": e.entree, "sortie": e.sortie, "deleted": e.deleted} for e in entries]
+    by_uuid = {e.uuid: e for e in entries}
+    return [(by_uuid[row["uuid"]], running) for row, running in cash_running_balances(rows)]
+
+
+def _cash_balance() -> float:
+    journal = _cash_journal()
+    return journal[-1][1] if journal else 0.0
+
+
+def _record_cash_sale(sale, agent_id, agent_uuid, agent_nom) -> None:
+    """Encaisse une vente en caisse. Appelé dans la transaction de la vente."""
+    CashEntry.objects.create(
+        uuid=str(uuid_mod.uuid4()), date=business_day(),
+        libelle=_limit(f"Vente — {sale.product_nom} x{sale.quantite:g}", 255, "libelle"),
+        entree=sale.montant_total, sortie=0, source="vente", sale_uuid=sale.uuid,
+        agent_id=agent_id, agent_uuid=agent_uuid, agent_nom=agent_nom,
+        created_at=business_timestamp(micro=True), deleted=False,
+    )
+
+
+@login_required(login_url="web:login")
+def caisse(request):
+    """Journal de caisse : entrées, sorties et solde progressif."""
+    journal = _cash_journal()
+    date_from = (request.GET.get("date_from") or "").strip()
+    date_to = (request.GET.get("date_to") or "").strip()
+    rows = [
+        {"entry": entry, "solde": solde}
+        for entry, solde in journal
+        if not (date_from and entry.date < date_from)
+        and not (date_to and entry.date > date_to)
+    ]
+    total_entrees = add(*(r["entry"].entree for r in rows))
+    total_sorties = add(*(r["entry"].sortie for r in rows))
+
+    export = (request.GET.get("export") or "").strip()
+    if export in ("xlsx", "pdf"):
+        headers = ["Date", "Libellé", "Entrées", "Sorties", "Solde progressif", "Agent"]
+        data = [[
+            r["entry"].date, r["entry"].libelle,
+            _fmt_money(r["entry"].entree) if r["entry"].entree else "",
+            _fmt_money(r["entry"].sortie) if r["entry"].sortie else "",
+            _fmt_money(r["solde"]), r["entry"].agent_nom or "",
+        ] for r in rows]
+        sub = "Caisse"
+        if date_from or date_to:
+            sub += f" — du {date_from or '…'} au {date_to or '…'}"
+        return _export_response(export, "caisse", "Caisse", headers, data, subtitle=sub)
+
+    return render(request, "web/caisse.html", {
+        "rows": list(reversed(rows)),
+        "solde": _cash_balance(),
+        "total_entrees": total_entrees,
+        "total_sorties": total_sorties,
+        "has_opening": CashEntry.objects.filter(source="ouverture", deleted=False).exists(),
+        "today": business_day(),
+        "filters": {"date_from": date_from, "date_to": date_to},
+    })
+
+
+@login_required(login_url="web:login")
+def cash_entry_new(request):
+    """Saisit une entrée, une sortie ou l'écriture d'ouverture."""
+    if request.method != "POST":
+        return redirect("web:caisse")
+    try:
+        with operation_transaction():
+            libelle = _limit((request.POST.get("libelle") or "").strip(), 255, "libelle")
+            if not libelle:
+                raise ValueError("Le libellé est obligatoire.")
+            sens = (request.POST.get("sens") or "").strip()
+            if sens not in ("entree", "sortie", "ouverture"):
+                raise ValueError("Précisez une entrée, une sortie ou une ouverture.")
+            montant = number((request.POST.get("montant") or "").strip().replace(" ", ""))
+            if montant <= 0:
+                raise ValueError("Le montant doit être strictement positif.")
+            date = (request.POST.get("date") or "").strip() or business_day()
+            try:
+                date = business_day(date)
+            except (ValueError, TypeError):
+                raise ValueError("Date invalide : format attendu AAAA-MM-JJ.")
+
+            if sens == "ouverture":
+                if CashEntry.objects.filter(source="ouverture", deleted=False).exists():
+                    raise ValueError("La caisse a déjà une écriture d'ouverture.")
+            elif sens == "sortie":
+                available = _cash_balance()
+                if montant > available:
+                    raise ValueError(
+                        f"Solde de caisse insuffisant : disponible {available:.0f} GNF, "
+                        f"sortie demandée {montant:.0f} GNF."
+                    )
+
+            agent = _current_remote_user(request)
+            r = _remote(request)
+            CashEntry.objects.create(
+                uuid=str(uuid_mod.uuid4()), date=date, libelle=libelle,
+                entree=montant if sens != "sortie" else 0,
+                sortie=montant if sens == "sortie" else 0,
+                source="ouverture" if sens == "ouverture" else "manuel",
+                sale_uuid="",
+                agent_id=(agent.id if agent else None),
+                agent_uuid=(agent.uuid if agent else ""),
+                agent_nom=(agent.nom_complet if agent else r.get("nom_complet") or ""),
+                created_at=business_timestamp(micro=True), deleted=False,
+            )
+            _log_audit(request, "cash_entry_create", target_type="cash_entry",
+                       details=f"{libelle} {sens}={montant:.0f}")
+    except (ValueError, TypeError, OverflowError) as exc:
+        messages.error(request, str(exc))
+        return redirect("web:caisse")
+    messages.success(
+        request,
+        f"Écriture enregistrée. Solde de la caisse : {_cash_balance():,.0f} GNF."
+        .replace(",", " "),
+    )
+    return redirect("web:caisse")
+
+
+@login_required(login_url="web:login")
+def cash_entry_delete(request, pk):
+    """Annule une écriture manuelle. Les encaissements suivent leur vente."""
+    entry = get_object_or_404(CashEntry, pk=pk, deleted=False)
+    if request.method != "POST":
+        return redirect("web:caisse")
+    if entry.source == "vente":
+        messages.error(request, "Cet encaissement suit sa vente : annulez la vente pour le retirer.")
+        return redirect("web:caisse")
+    with operation_transaction():
+        if entry.entree > 0 and entry.entree > _cash_balance():
+            messages.error(request, "Annuler cette entrée rendrait le solde de caisse négatif.")
+            return redirect("web:caisse")
+        entry.deleted = True
+        entry.save()
+        _log_audit(request, "cash_entry_delete", target_type="cash_entry",
+                   target_id=str(pk), details=entry.libelle)
+    messages.success(request, "Écriture annulée.")
+    return redirect("web:caisse")
+
+
 @login_required(login_url="web:login")
 def transactions(request):
     qs = Transaction.objects.filter(deleted=False)
@@ -811,7 +1005,9 @@ def transactions(request):
     n_total = qs.count()
     page_obj = _paginate(request, qs)
 
+    from sync.deposit_limits import get_deposit_warnings
     return render(request, "web/transactions.html", {
+        "deposit_warnings": get_deposit_warnings(),
         "page_obj": page_obj,
         "n_total": n_total,
         "total_depots": total_depots,
@@ -849,10 +1045,11 @@ def sales(request):
 
     export = (request.GET.get("export") or "").strip()
     if export in ("xlsx", "pdf"):
-        headers = ["Date", "Matricule", "Produit", "Qté", "Prix unit.",
+        headers = ["Date", "Payé par", "Produit", "Qté", "Prix unit.",
                    "Total", "Solde après", "Agent"]
         rows = [[
-            s.created_at, s.matricule, s.product_nom, _fmt_num(s.quantite),
+            s.created_at, "Caisse" if s.mode_paiement == "caisse" else s.matricule,
+            s.product_nom, _fmt_num(s.quantite),
             _fmt_money(s.prix_unitaire), _fmt_money(s.montant_total),
             _fmt_money(s.solde_apres), s.agent_nom or "",
         ] for s in qs]
@@ -1541,6 +1738,13 @@ def transaction_restore(request, pk):
     """Restaure une transaction depuis la corbeille."""
     tx = get_object_or_404(Transaction, pk=pk, deleted=True)
     if request.method == "POST":
+        if tx.type == "depot":
+            try:
+                check_daily_deposit(tx.montant, _daily_deposits(
+                    tx.matricule, business_day(tx.created_at), exclude_uuid=tx.uuid))
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return redirect("web:trash")
         if tx.type == "retrait" and tx.montant > _matricule_balance(tx.matricule):
             messages.error(request, "Solde insuffisant pour restaurer ce retrait.")
             return redirect("web:trash")
@@ -1576,6 +1780,9 @@ def sale_delete(request, pk):
     if request.method == "POST":
         sale.deleted = True
         sale.save()
+        # L'encaissement suit sa vente : il sort de la caisse avec elle.
+        CashEntry.objects.filter(sale_uuid=sale.uuid, source="vente", deleted=False).update(
+            deleted=True)
         # Rend la quantité au stock (mouvement d'annulation, traçable).
         product = _sale_product(sale)
         if product:
@@ -1619,11 +1826,10 @@ def sale_restore(request, pk):
         if sale.quantite > product.quantite_stock:
             messages.error(request, "Stock insuffisant pour restaurer cette vente.")
             return redirect("web:trash")
-        if sale.montant_total > _matricule_balance(sale.matricule):
-            messages.error(request, "Solde insuffisant pour restaurer cette vente.")
-            return redirect("web:trash")
         sale.deleted = False
         sale.save()
+        CashEntry.objects.filter(sale_uuid=sale.uuid, source="vente", deleted=True).update(
+            deleted=False)
         if product:
             new_stock = subtract(product.quantite_stock or 0, sale.quantite or 0)
             product.quantite_stock = new_stock

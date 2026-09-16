@@ -8,6 +8,17 @@
   <span class="text-muted">{{ n_total|num }} opérations · dépôts {{ total_depots|money }} · retraits {{ total_retraits|money }}</span>
 </div>
 
+{% if deposit_warnings %}
+<div class="alert alert-warning" role="alert">
+  <strong>{{ deposit_warnings|length }} dépassement(s) du plafond des dépôts à vérifier.</strong>
+  Contrôle global : 40 000 GNF par matricule et par jour, tous postes confondus.
+  Les encaissements et leurs justificatifs sont conservés.
+  <details class="mt-2"><summary>Voir les matricules et journées concernés</summary>
+    <ul class="mb-0">{% for warning in deposit_warnings %}<li>{{ warning.message }}</li>{% endfor %}</ul>
+  </details>
+</div>
+{% endif %}
+
 <form method="get" class="filter-card mb-3">
   <div class="row g-2">
     <div class="col-sm-6 col-md-3">

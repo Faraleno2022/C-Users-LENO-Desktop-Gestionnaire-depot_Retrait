@@ -9,7 +9,7 @@ from django.db import close_old_connections, connection
 from django.test import RequestFactory, TransactionTestCase
 
 from sync.models import Product, Sale, StockMovement, Transaction
-from web.views import _matricule_balance, withdrawal_new
+from web.views import _matricule_balance, withdrawal_new, deposit_new
 
 
 class ConcurrentAccountingTests(TransactionTestCase):
@@ -35,7 +35,7 @@ class ConcurrentAccountingTests(TransactionTestCase):
                     payload.update(prod_id=[str(self.product.pk)], prod_qte=["7"])
                 request = RequestFactory().post("/transactions/retrait/", payload)
                 request.user = SimpleNamespace(is_authenticated=True, username="test", first_name="Test")
-                request.session = {"remote_user": {"role": "admin"}}
+                request.session = {"remote_user": {"role": "admin", "identifiant": "test"}}
                 request._messages = FallbackStorage(request)
                 barrier.wait(timeout=10)
                 return withdrawal_new(request).status_code
@@ -57,3 +57,23 @@ class ConcurrentAccountingTests(TransactionTestCase):
         self.assertEqual(Sale.objects.count(), 1)
         self.assertEqual(StockMovement.objects.count(), 1)
         self.assertEqual(_matricule_balance("CLIENT"), 9300)
+
+
+    def test_concurrent_deposits_cannot_exceed_daily_cap(self):
+        barrier = threading.Barrier(2)
+        def operation():
+            close_old_connections()
+            try:
+                request = RequestFactory().post("/transactions/depot/",
+                            {"matricule": "NEW", "montant": "25000"})
+                request.user = SimpleNamespace(is_authenticated=True, username="test", first_name="Test")
+                request.session = {"remote_user": {"role": "admin", "identifiant": "test"}}
+                request._messages = FallbackStorage(request)
+                barrier.wait(timeout=10)
+                return deposit_new(request).status_code
+            finally:
+                connection.close()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: operation(), range(2)))
+        self.assertCountEqual(results, [302, 200])
+        self.assertEqual(_matricule_balance("NEW"), 25000)

@@ -200,6 +200,19 @@ def _apply_post_migrations(conn) -> None:
         )
         conn.commit()
 
+    cur.execute("SELECT value FROM app_settings WHERE key = 'mig_cash_register_v1'")
+    if cur.fetchone() is None:
+        # Caisse : les ventes existantes sont toutes des ventes sur compte.
+        cols = [r["name"] for r in cur.execute("PRAGMA table_info(sales)").fetchall()]
+        if "mode_paiement" not in cols:
+            cur.execute(
+                "ALTER TABLE sales ADD COLUMN mode_paiement TEXT NOT NULL DEFAULT 'compte'"
+            )
+        cur.execute(
+            "INSERT INTO app_settings(key, value) VALUES ('mig_cash_register_v1', '1')"
+        )
+        conn.commit()
+
 
 def _allow_missing_agents(conn):
     """Migre les anciennes tables sans perdre leurs données, index ou séquences."""

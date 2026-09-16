@@ -270,6 +270,10 @@ def build_plan(products, movements, transactions, sales, audit_logs=()):
                     if not math.isfinite(float(amount)):
                         raise ValueError("Montant hors limites.")
                     _change(plan, table, row, montant_total=float(amount))
+                    if row.get("mode_paiement") == "caisse":
+                        # Vente encaissée : elle appartient à la caisse, pas à
+                        # un compte client, et n'entre dans aucun solde.
+                        continue
                     delta, rank = -amount, 2
                 else:
                     amount = decimal(row["montant"])
@@ -290,9 +294,7 @@ def build_plan(products, movements, transactions, sales, audit_logs=()):
             balance += delta
             _change(plan, table, row, solde_apres=float(balance))
         plan["balances"].append({"matricule": matricule, "balance": float(balance)})
-        if balance < 0:
-            _issue(plan, "transactions", {"matricule": matricule},
-                   "Solde négatif : justificatifs des dépôts et débits à vérifier.")
+        # Un solde négatif représente désormais une dette issue de ventes à crédit.
     return plan
 
 

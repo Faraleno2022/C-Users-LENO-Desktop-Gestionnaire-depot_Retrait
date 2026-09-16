@@ -53,7 +53,7 @@ REPORT_HEADERS = [
 ]
 
 SALES_HEADERS = [
-    "ID", "Date", "Matricule", "Produit", "Quantité",
+    "ID", "Date", "Payé par", "Produit", "Quantité",
     "Prix unitaire", "Montant", "Solde après", "Agent",
 ]
 
@@ -65,8 +65,8 @@ STOCK_HEADERS = [
 
 def fetch_sales_rows(date_from: str, date_to: str, agent_id: Optional[int] = None) -> List[Sequence]:
     conn = get_connection()
-    sql = """SELECT id, created_at, matricule, product_nom, quantite, prix_unitaire,
-                    montant_total, solde_apres, agent_nom
+    sql = """SELECT id, created_at, matricule, mode_paiement, product_nom, quantite,
+                    prix_unitaire, montant_total, solde_apres, agent_nom
              FROM sales
              WHERE deleted = 0 AND created_at >= ? AND created_at <= ?"""
     params: list = [f"{date_from} 00:00:00", f"{date_to} 23:59:59"]
@@ -80,7 +80,7 @@ def fetch_sales_rows(date_from: str, date_to: str, agent_id: Optional[int] = Non
         out.append([
             r["id"],
             r["created_at"],
-            r["matricule"],
+            "Caisse" if r["mode_paiement"] == "caisse" else r["matricule"],
             r["product_nom"],
             report_number(r["quantite"]),
             format_money(r["prix_unitaire"]),
