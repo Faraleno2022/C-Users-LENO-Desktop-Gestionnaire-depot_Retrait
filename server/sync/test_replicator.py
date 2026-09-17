@@ -107,3 +107,15 @@ class ReplicatorTests(TestCase):
             self.assertEqual(self.rep.run_once(), {})
         # Le dépassement reste visible sur la page Dépôts / Retraits.
         self.assertEqual(get_deposit_warnings()[0]["day"], old_day)
+
+
+    def test_pull_normalizes_legacy_zero_inventory_without_changing_other_facts(self):
+        from sync.models import StockMovement
+        record = dict(uuid="legacy-count", product_id=1, product_uuid="p1",
+                      product_nom="Article test", type="entree", quantite=0, stock_apres=3,
+                      motif="Inventaire physique", created_at="2026-09-01 10:00:00")
+        with patch("sync.replicator.requests.get", return_value=self.response({"records": [record]})):
+            self.assertEqual(self.rep._pull_table("stock_movements"), (1, 0))
+            self.assertEqual(self.rep._pull_table("stock_movements"), (0, 0))
+        movement = StockMovement.objects.get(uuid="legacy-count")
+        self.assertEqual((movement.quantite, movement.stock_apres, movement.stock_compte), (0, 3, 3))
