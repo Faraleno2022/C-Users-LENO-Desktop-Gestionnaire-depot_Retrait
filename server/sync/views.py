@@ -44,6 +44,18 @@ def _coerce(model, record, allowed):
     (postes) ne vérifie pas max_length mais PostgreSQL (serveur) refuse avec
     une erreur 500 — ce qui bloquerait la synchronisation de tout le lot.
     """
+    # Les anciennes consoles stockaient le comptage dans stock_apres, sans
+    # stock_compte. Un inventaire confirmé sans écart (quantite=0) bloquait tout
+    # le lot avant même la protection des mouvements déjà recalculés.
+    # Le libellé historique exact apporte la même preuve que le diagnostic.
+    if (model.__name__ == "StockMovement"
+            and record.get("stock_compte") is None
+            and record.get("motif") == "Inventaire physique"):
+        quantity = model._meta.get_field("quantite").to_python(record.get("quantite"))
+        counted = model._meta.get_field("stock_apres").to_python(record.get("stock_apres"))
+        if quantity == 0 and counted is not None and isfinite(counted) and counted >= 0:
+            record = dict(record, stock_compte=counted)
+
     out = {}
     for k in allowed:
         if k not in record:

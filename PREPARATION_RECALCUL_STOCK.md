@@ -223,3 +223,17 @@ puis enregistrer l'inventaire réel pour obtenir un ajustement traçable.
   Console Web.
 - Le mode se synchronise entre les postes et le serveur comme le reste de la fiche
   article.
+
+
+## Compatibilité de synchronisation des anciennes consoles
+
+Le serveur accepte aussi un ancien mouvement de quantité nulle lorsqu'il porte
+le libellé exact **Inventaire physique** et un stock après fini, non négatif.
+Ce stock après représente le comptage enregistré par l'ancien écran ; il est
+repris dans le champ du comptage physique. Un simple mouvement nul sans cette preuve reste refusé.
+
+Cette compatibilité évite qu'un ancien inventaire sans écart bloque les lots
+suivants de ventes et de dépôts. Les UUID restent inchangés, un renvoi ne crée
+pas de doublon et ne remplace pas un mouvement déjà corrigé sur le serveur.
+Le correctif serveur fonctionne avec les anciennes consoles, sans leur demander
+de réécrire l'historique ni de réinitialiser leur base locale.
