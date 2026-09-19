@@ -211,37 +211,72 @@ def _known_matricules() -> List[str]:
 
 
 def list_clients(query: Optional[str] = None) -> List[ClientRow]:
+    """État cohérent des comptes, sans requête supplémentaire par client."""
+    from collections import defaultdict
+    from decimal import Decimal
+
     conn = get_connection()
-    fiches = {
-        c["matricule"]: c
-        for c in conn.execute("SELECT * FROM clients WHERE actif = 1").fetchall()
-    }
-    result: List[ClientRow] = []
+    # Lecture cohérente, y compris lorsqu'une synchronisation écrit en parallèle.
+    # SAVEPOINT respecte aussi une éventuelle transaction appelante.
+    conn.execute("SAVEPOINT client_balance_read")
+    try:
+        fiches = {c["matricule"]: c for c in conn.execute("SELECT * FROM clients WHERE actif=1")}
+        balances = defaultdict(lambda: Decimal(0))
+        counts = defaultdict(int)
+        for row in conn.execute("SELECT matricule,type,montant FROM transactions WHERE deleted=0"):
+            mat = row["matricule"]
+            if mat:
+                balances[mat] += Decimal(str(row["montant"])) * (1 if row["type"] == "depot" else -1)
+                counts[mat] += 1
+        for row in conn.execute("SELECT matricule,montant_total,mode_paiement FROM sales WHERE deleted=0"):
+            mat = row["matricule"]
+            if mat:
+                counts[mat] += 1
+                if row["mode_paiement"] != "caisse":
+                    balances[mat] -= Decimal(str(row["montant_total"]))
+    finally:
+        conn.execute("RELEASE SAVEPOINT client_balance_read")
+
+    result = []
     q = (query or "").strip().lower()
-    for matricule in sorted(set(_known_matricules())):
+    for matricule in sorted(set(fiches) | set(counts)):
         fiche = fiches.get(matricule)
         nom = (fiche["nom"] if fiche else "") or ""
-        telephone = (fiche["telephone"] if fiche else "") or ""
         if q and q not in matricule.lower() and q not in nom.lower():
             continue
-        nb = conn.execute(
-            """SELECT
-                  (SELECT COUNT(*) FROM transactions WHERE deleted = 0 AND matricule = ?)
-                + (SELECT COUNT(*) FROM sales WHERE deleted = 0 AND matricule = ?) AS n""",
-            (matricule, matricule),
-        ).fetchone()["n"]
-        result.append(
-            ClientRow(
-                matricule=matricule,
-                nom=nom,
-                telephone=telephone,
-                solde=transaction_service.get_matricule_balance(matricule),
-                nb_operations=int(nb),
-                enregistre=fiche is not None,
-                client_id=fiche["id"] if fiche else None,
-            )
-        )
+        result.append(ClientRow(
+            matricule=matricule, nom=nom,
+            telephone=(fiche["telephone"] if fiche else "") or "",
+            solde=float(balances[matricule]), nb_operations=counts[matricule],
+            enregistre=fiche is not None, client_id=fiche["id"] if fiche else None,
+        ))
     return result
+
+
+EXPORT_HEADERS = ["Matricule", "Nom", "Téléphone", "Solde", "Opérations", "Fiche client"]
+
+
+def export_rows(query: Optional[str] = None) -> list:
+    """Lignes de l'état des soldes, suivies d'une ligne de total.
+
+    Reprend exactement `list_clients`, donc exactement ce que montre l'écran :
+    matricules sans fiche compris, ventes encaissées en caisse exclues. Les
+    montants restent des nombres dans Excel, pour que les totaux s'y recalculent.
+    """
+    from app.utils.accounting import add
+    from app.utils.report_values import report_money, report_number
+
+    clients = list_clients(query)
+    rows = [[
+        c.matricule, c.nom, c.telephone, report_money(c.solde),
+        report_number(c.nb_operations), "Oui" if c.enregistre else "Non",
+    ] for c in clients]
+    rows.append([
+        "TOTAL", f"{len(clients)} compte(s)", "",
+        report_money(add(*(c.solde for c in clients))),
+        report_number(sum(c.nb_operations for c in clients)), "",
+    ])
+    return rows
 
 
 def client_operations(matricule: str, limit: int = 200) -> List[ClientOperation]:

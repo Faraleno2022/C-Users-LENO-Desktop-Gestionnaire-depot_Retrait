@@ -33,7 +33,7 @@ from sync.business_rules import (
 from web.reports import build_excel, build_pdf, _fmt_money, _fmt_num
 
 
-def _export_response(fmt: str, slug: str, title: str, headers, rows, subtitle: str = ""):
+def _export_response(fmt: str, slug: str, title: str, headers, rows, subtitle: str = "", pdf_builder=None):
     """Construit une réponse HTTP de téléchargement Excel (xlsx) ou PDF.
 
     `fmt` vaut "xlsx" ou "pdf". `slug` sert de base au nom de fichier.
@@ -48,7 +48,7 @@ def _export_response(fmt: str, slug: str, title: str, headers, rows, subtitle: s
         )
         resp["Content-Disposition"] = f'attachment; filename="{slug}_{ts}.xlsx"'
         return resp
-    content = build_pdf(title, headers, rows, subtitle=subtitle)
+    content = (pdf_builder or build_pdf)(title, headers, rows, subtitle=subtitle)
     resp = HttpResponse(content, content_type="application/pdf")
     resp["Content-Disposition"] = f'attachment; filename="{slug}_{ts}.pdf"'
     return resp
@@ -2198,10 +2198,83 @@ def inventory(request):
     })
 
 
+@snapshot_read
+def _client_balances(search: str = ""):
+    """Tous les comptes clients avec leur solde, calculés en trois requêtes.
+
+    On couvre les fiches actives ET les matricules qui ont des opérations sans
+    fiche : ces comptes détiennent aussi de l'argent, et les omettre fausserait
+    un état des soldes. L'arithmétique est celle de `_matricule_balance` (somme
+    exacte `add`, ventes encaissées en caisse exclues), donc chaque solde est
+    identique à celui affiché ailleurs. Une boucle client par client coûterait
+    plusieurs requêtes par matricule : des milliers d'allers-retours au serveur.
+    """
+    from collections import defaultdict
+
+    moves = defaultdict(list)
+    counts = defaultdict(int)
+    for matricule, kind, amount in Transaction.objects.filter(deleted=False).values_list(
+            "matricule", "type", "montant"):
+        if not matricule:
+            continue
+        moves[matricule].append(amount if kind == "depot" else -amount)
+        counts[matricule] += 1
+    for matricule, amount, mode in Sale.objects.filter(deleted=False).values_list(
+            "matricule", "montant_total", "mode_paiement"):
+        if not matricule:
+            continue
+        counts[matricule] += 1
+        if mode != "caisse":
+            moves[matricule].append(-amount)
+    fiches = {c.matricule: c for c in Client.objects.filter(actif=True)}
+
+    needle = (search or "").strip().lower()
+    rows = []
+    for matricule in sorted(set(fiches) | set(counts)):
+        fiche = fiches.get(matricule)
+        nom = (fiche.nom if fiche else "") or ""
+        if needle and needle not in matricule.lower() and needle not in nom.lower():
+            continue
+        rows.append({
+            "matricule": matricule,
+            "nom": nom,
+            "telephone": (fiche.telephone if fiche else "") or "",
+            "solde": add(*moves[matricule]),
+            "n_ops": counts[matricule],
+            "fiche": fiche is not None,
+        })
+    return rows
+
+
+def _export_client_balances(fmt: str, search: str):
+    rows = _client_balances(search)
+    headers = ["Matricule", "Nom", "Téléphone", "Solde", "Opérations", "Fiche client"]
+    data = [[
+        r["matricule"], r["nom"], r["telephone"], _fmt_money(r["solde"]),
+        _fmt_num(r["n_ops"]), "Oui" if r["fiche"] else "Non",
+    ] for r in rows]
+    total = add(*(r["solde"] for r in rows))
+    data.append([
+        "TOTAL", f"{len(rows)} compte(s)", "", _fmt_money(total),
+        _fmt_num(sum(r["n_ops"] for r in rows)), "",
+    ])
+    sans_fiche = sum(1 for r in rows if not r["fiche"])
+    sub = f"{len(rows)} compte(s) dont {sans_fiche} sans fiche - au {timezone.now():%d/%m/%Y %H:%M} UTC"
+    if search:
+        sub += f" — recherche « {search} »"
+    from sync.client_report import build_client_pdf
+    return _export_response(fmt, "clients_soldes", "Clients et soldes", headers, data,
+                            subtitle=sub, pdf_builder=build_client_pdf)
+
+
 @login_required(login_url="web:login")
 def clients(request):
     qs = Client.objects.filter(actif=True)
     search = (request.GET.get("q") or "").strip()
+    export = (request.GET.get("export") or "").strip()
+    if export in ("xlsx", "pdf"):
+        # L'export couvre tous les comptes, pas la seule page affichée.
+        return _export_client_balances(export, search)
     if search:
         qs = qs.filter(Q(matricule__icontains=search) | Q(nom__icontains=search))
     qs = qs.order_by("matricule")

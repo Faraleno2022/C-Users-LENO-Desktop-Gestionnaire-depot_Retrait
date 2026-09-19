@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Callable, Optional
+from datetime import datetime, timezone
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -9,6 +10,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -25,6 +27,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pathlib import Path
+
+from app.config import EXPORT_DIR
 from app.models.user import User
 from app.services import client_service
 from app.utils.helpers import format_money
@@ -167,11 +172,21 @@ class ClientsView(QWidget):
         delete_btn = QPushButton("Supprimer la fiche")
         delete_btn.setProperty("class", "danger")
         delete_btn.clicked.connect(self._delete)
+        export_xlsx_btn = QPushButton("Soldes Excel")
+        export_xlsx_btn.setProperty("class", "secondary")
+        export_xlsx_btn.setToolTip("Tous les comptes affichés avec leur solde, et le total.")
+        export_xlsx_btn.clicked.connect(lambda: self._export("xlsx"))
+        export_pdf_btn = QPushButton("Soldes PDF")
+        export_pdf_btn.setProperty("class", "secondary")
+        export_pdf_btn.setToolTip("Tous les comptes affichés avec leur solde, et le total.")
+        export_pdf_btn.clicked.connect(lambda: self._export("pdf"))
         bar.addWidget(self.search_edit)
         bar.addStretch()
         bar.addWidget(add_btn)
         bar.addWidget(edit_btn)
         bar.addWidget(detail_btn)
+        bar.addWidget(export_xlsx_btn)
+        bar.addWidget(export_pdf_btn)
         bar.addWidget(delete_btn)
         # Scroll horizontal pour la barre d'actions sur fenêtre étroite
         bar_widget = QWidget()
@@ -238,6 +253,41 @@ class ClientsView(QWidget):
         self.summary_label.setText(
             f"{len(clients)} client(s) — Solde cumulé : {format_money(total_solde)}"
         )
+
+    def _export(self, fmt: str) -> None:
+        """Exporte l'état des soldes, filtré comme l'écran par la recherche."""
+        query = self.search_edit.text().strip() or None
+        try:
+            rows = client_service.export_rows(query)
+        except Exception as exc:
+            error(self, "Erreur d'export", str(exc))
+            return
+        if len(rows) <= 1:  # la seule ligne de total : rien à exporter
+            info(self, "Export", "Aucun client à exporter.")
+            return
+        default = EXPORT_DIR / f"clients_soldes.{fmt}"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Enregistrer l'état des soldes", str(default),
+            "Excel (*.xlsx)" if fmt == "xlsx" else "PDF (*.pdf)",
+        )
+        if not path:
+            return
+        title = "Clients et soldes"
+        stamp = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+        subtitle = f"{len(rows) - 1} compte(s) - au {stamp}"
+        if query:
+            subtitle += f" - recherche : {query}"
+        try:
+            if fmt == "xlsx":
+                from app.utils.exporters import export_to_excel
+                export_to_excel(Path(path), f"{title} ({subtitle})", client_service.EXPORT_HEADERS, rows)
+            else:
+                from server.sync.client_report import build_client_pdf
+                Path(path).write_bytes(build_client_pdf(title, client_service.EXPORT_HEADERS, rows, subtitle))
+        except Exception as exc:
+            error(self, "Erreur d'export", str(exc))
+            return
+        info(self, "Export", f"{len(rows) - 1} compte(s) exporté(s) :\n{path}")
 
     def _selected(self):
         row = self.table.currentRow()
