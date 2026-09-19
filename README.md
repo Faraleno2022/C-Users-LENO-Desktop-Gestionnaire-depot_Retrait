@@ -112,3 +112,20 @@ Le dossier `server/` contient `render.yaml` (service web + PostgreSQL gérée),
 à Render : le blueprint provisionne la base, applique les migrations et démarre
 gunicorn. Définissez `DJANGO_SECRET_KEY` (généré automatiquement) puis créez un
 poste via le shell Render (`python manage.py createdevice ...`).
+
+
+### Export des clients et de leurs soldes
+
+Dans **Clients**, utiliser **Soldes Excel** ou **Soldes PDF**. La recherche
+par matricule ou par nom s'applique aussi à l'export. Le fichier inclut tous
+les comptes correspondant à cette recherche, même au-delà des lignes affichées :
+matricule, nom, téléphone, solde en GNF, nombre d'opérations et présence d'une fiche.
+
+Les comptes sans fiche ayant des opérations sont inclus. Le total général
+comprend les soldes négatifs (dettes des clients). Les opérations annulées et
+les ventes payées directement en caisse ne débitent pas le solde exporté.
+Les montants Excel sont numériques. Le PDF répète les en-têtes sur chaque page.
+
+Disponibilité : site web, Console Web **1.0.34**, Gestionnaire **1.1.10**.
+Le solde exporté correspond aux données disponibles dans cette installation :
+synchroniser les postes pour intégrer leurs opérations récentes.

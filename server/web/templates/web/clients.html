@@ -15,11 +15,21 @@
 
 <form method="get" class="filter-card mb-3">
   <div class="row g-2">
-    <div class="col-sm-9">
+    <div class="col-sm-6">
       <input type="text" name="q" value="{{ search }}" class="form-control form-control-sm" placeholder="Rechercher par matricule ou nom…">
     </div>
-    <div class="col-sm-3">
+    <div class="col-sm-2">
       <button class="btn btn-primary btn-sm w-100">Rechercher</button>
+    </div>
+    <div class="col-sm-4 text-sm-end">
+      <a href="?q={{ search|urlencode }}&export=xlsx" class="btn btn-sm btn-outline-success"
+         title="Tous les comptes avec leur solde, y compris les matricules sans fiche">
+        <i class="bi bi-file-earmark-excel"></i> Soldes Excel
+      </a>
+      <a href="?q={{ search|urlencode }}&export=pdf" class="btn btn-sm btn-outline-danger"
+         title="Tous les comptes avec leur solde, y compris les matricules sans fiche">
+        <i class="bi bi-file-earmark-pdf"></i> Soldes PDF
+      </a>
     </div>
   </div>
 </form>
