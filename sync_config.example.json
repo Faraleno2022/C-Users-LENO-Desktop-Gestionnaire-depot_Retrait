@@ -1,0 +1,7 @@
+{
+  "server_url": "https://VOTRE-SERVEUR.onrender.com",
+  "device_token": "COLLEZ_ICI_LE_JETON_DU_POSTE",
+  "device_name": "Caisse principale",
+  "auto_sync": true,
+  "auto_sync_interval_seconds": 15
+}

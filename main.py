@@ -115,6 +115,24 @@ def main() -> int:
         QMessageBox.critical(None, "Erreur d'initialisation", str(e))
         return 1
 
+    # Fichier `sync_config.json` déposé à côté de l'application ? On l'applique
+    # (URL serveur, jeton, nom du poste) puis on le renomme. Une erreur de
+    # format est signalée mais ne bloque pas le démarrage.
+    try:
+        from app.services import sync_config_file
+        applied = sync_config_file.apply_sync_config_file_if_present()
+        if applied is not None:
+            print(f"Configuration de synchronisation importée depuis {applied}")
+    except Exception as e:
+        traceback.print_exc()
+        QMessageBox.warning(
+            None, "Configuration de synchronisation",
+            "Le fichier sync_config.json n'a pas pu être appliqué :\n"
+            f"{e}\n\n"
+            "Corrigez-le ou configurez la synchronisation dans "
+            "Administration → Synchronisation.",
+        )
+
     # Sauvegarde planifiée : exécutée au démarrage si la périodicité est échue.
     try:
         created = backup_service.run_auto_backup_if_due()

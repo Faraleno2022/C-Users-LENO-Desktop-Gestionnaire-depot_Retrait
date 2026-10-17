@@ -49,5 +49,12 @@ htmlcov/
 # Private generated reports and physical inventory sheets
 outputs/
 
+# Sync configuration with the device token (use sync_config.example.json as template)
+sync_config.json
+sync_config.applied.json
+
+# Local release snapshots
+.release-*/
+
 # Worktree de release (autre depot)
 .release-*/

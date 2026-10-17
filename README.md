@@ -89,6 +89,39 @@ puis *Tester la connexion* et *Synchroniser maintenant*.
 On peut aussi le fournir par variables d'environnement :
 `GESTIONNAIRE_SERVER_URL`, `GESTIONNAIRE_DEVICE_TOKEN`.
 
+### Configurer la synchronisation en un clic
+
+Deux moyens de configurer un poste **sans ouvrir l'application** :
+
+1. **`Configurer_Synchronisation.bat`** (racine du projet) : double-cliquez,
+   une fenêtre demande l'URL du serveur, le jeton et le nom du poste, propose
+   *Tester la connexion* et *Enregistrer*. La configuration est écrite dans la
+   base locale du poste (détection automatique : poste installé dans
+   `%LOCALAPPDATA%\EMAB GROUP\Gestionnaire`, sinon `data/gestionnaire.db`),
+   exactement comme depuis l'écran Administration → Synchronisation.
+   Options : `--console` (mode texte), `--apply` (applique `sync_config.json`
+   sans fenêtre), `--db chemin\gestionnaire.db`.
+
+2. **Fichier `sync_config.json`** : copiez `sync_config.example.json` en
+   `sync_config.json`, remplissez-le et déposez-le à côté de l'application
+   (dossier du projet, dossier de l'exécutable, ou dossier de données). Au
+   démarrage suivant, l'application l'applique puis le renomme en
+   `sync_config.applied.json`. Ce fichier contient le jeton du poste : il est
+   ignoré par git.
+
+```json
+{
+  "server_url": "https://votre-serveur.onrender.com",
+  "device_token": "JETON_DU_POSTE",
+  "device_name": "Caisse principale",
+  "auto_sync": true,
+  "auto_sync_interval_seconds": 15
+}
+```
+
+Redémarrez l'application après la configuration : la synchronisation
+automatique démarre dès que l'URL et le jeton sont valides.
+
 ### Lancer le serveur en local
 
 ```bash
