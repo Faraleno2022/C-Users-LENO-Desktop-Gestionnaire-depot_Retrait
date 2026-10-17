@@ -62,14 +62,15 @@ echo [1/3] Modifications locales :
 git status --short
 git add -A
 git diff --cached --quiet
-if errorlevel 1 (
-    set "MSG="
-    set /p MSG=Message de la mise a jour (Entree = message automatique) : 
-    if "!MSG!"=="" set "MSG=Synchronisation du %DATE% %TIME:~0,8%"
-    git commit -m "!MSG!" || goto :fin_erreur
-) else (
-    echo        Aucune modification a enregistrer.
-)
+if not errorlevel 1 goto :rien_a_enregistrer
+set "MSG="
+set /p "MSG=Message de la mise a jour [Entree = message automatique] : "
+if "!MSG!"=="" set "MSG=Synchronisation du %DATE% %TIME:~0,8%"
+git commit -m "!MSG!" || goto :fin_erreur
+goto :enregistre
+:rien_a_enregistrer
+echo        Aucune modification a enregistrer.
+:enregistre
 
 rem --- 2. Recuperer les modifications distantes ----------------------
 echo.
