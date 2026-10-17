@@ -48,3 +48,6 @@ htmlcov/
 
 # Private generated reports and physical inventory sheets
 outputs/
+
+# Worktree de release (autre depot)
+.release-*/
