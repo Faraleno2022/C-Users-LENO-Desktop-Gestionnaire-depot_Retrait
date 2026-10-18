@@ -1,0 +1,107 @@
+{% extends "web/base.html" %}
+{% block title %}Impression des tickets{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center mb-3">
+  <h1 class="h3 me-auto mb-2"><i class="bi bi-printer"></i> Impression des tickets</h1>
+  <a href="{% url 'web:print_ticket' %}?kind=test&auto=1" target="_blank" class="btn btn-dark btn-sm">
+    <i class="bi bi-receipt"></i> Imprimer un ticket test
+  </a>
+</div>
+
+<div class="alert alert-info small">
+  <i class="bi bi-info-circle"></i>
+  Les coordonnées ci-dessous s'impriment en en-tête de chaque ticket de dépôt,
+  retrait ou vente. La largeur du rouleau s'applique par défaut à tous les
+  tickets (modifiable ticket par ticket). Avec l'impression automatique, le
+  ticket part dès la validation d'une opération : immédiat sur la console
+  locale en mode caisse, via la boîte d'impression du navigateur ailleurs.
+</div>
+
+<form method="post" class="filter-card mb-4">
+  {% csrf_token %}
+  <input type="hidden" name="action" value="save">
+  <div class="row g-3">
+    <div class="col-md-6">
+      <label class="form-label small">Nom imprimé en en-tête</label>
+      <input type="text" name="company_name" class="form-control form-control-sm"
+             value="{{ cfg.company_name }}" maxlength="80" required>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label small">Téléphone</label>
+      <input type="text" name="company_phone" class="form-control form-control-sm"
+             value="{{ cfg.company_phone }}" maxlength="60" placeholder="ex : +224 6XX XX XX XX">
+    </div>
+    <div class="col-12">
+      <label class="form-label small">Adresse</label>
+      <input type="text" name="company_address" class="form-control form-control-sm"
+             value="{{ cfg.company_address }}" maxlength="120">
+    </div>
+    <div class="col-12">
+      <label class="form-label small">Pied de page du ticket</label>
+      <input type="text" name="ticket_footer" class="form-control form-control-sm"
+             value="{{ cfg.ticket_footer }}" maxlength="120">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label small">Largeur du rouleau</label>
+      <select name="paper_width" class="form-select form-select-sm">
+        <option value="80" {% if cfg.paper_width == "80" %}selected{% endif %}>80 mm (standard)</option>
+        <option value="58" {% if cfg.paper_width == "58" %}selected{% endif %}>58 mm</option>
+      </select>
+    </div>
+    <div class="col-md-8 d-flex align-items-end">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" name="auto_print" id="auto_print" value="1"
+               {% if cfg.auto_print %}checked{% endif %}>
+        <label class="form-check-label" for="auto_print">
+          Imprimer le ticket automatiquement après chaque validation
+        </label>
+      </div>
+    </div>
+
+    {% if is_local %}
+      <div class="col-12"><hr class="my-1"></div>
+      <div class="col-12">
+        <h2 class="h6 mb-1"><i class="bi bi-pc-display"></i> Imprimante de ce poste (console locale)</h2>
+        <p class="small text-muted mb-2">
+          Imprimante Windows vers laquelle Chrome envoie les tickets sans boîte de
+          dialogue. « Automatique » retient le pilote thermique détecté
+          {% if detected %}(actuellement : <strong>{{ detected }}</strong>){% else %}(aucun détecté pour l'instant){% endif %}.
+          Un changement est pris en compte au prochain démarrage de la console.
+        </p>
+      </div>
+      <div class="col-md-8">
+        <select name="printer" class="form-select form-select-sm">
+          <option value="" {% if not local_printer %}selected{% endif %}>Automatique (imprimante à tickets détectée)</option>
+          {% for p in printers %}
+            <option value="{{ p }}" {% if p == local_printer %}selected{% endif %}>{{ p }}{% if p == default_printer %} — par défaut Windows{% endif %}</option>
+          {% endfor %}
+          {% if local_printer and local_printer not in printers %}
+            <option value="{{ local_printer }}" selected>{{ local_printer }} — non détectée</option>
+          {% endif %}
+        </select>
+      </div>
+    {% endif %}
+
+    <div class="col-12">
+      <button class="btn btn-success btn-sm"><i class="bi bi-check-lg"></i> Enregistrer</button>
+    </div>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="card-body small">
+    <h2 class="h6"><i class="bi bi-question-circle"></i> Installer l'imprimante sur un poste</h2>
+    <p class="mb-1">
+      Branchez l'imprimante thermique en USB et lancez <code>Installer_Imprimante_Ticket.cmd</code>
+      (fourni avec EMAB Gestionnaire, menu Démarrer → <em>Installer l'imprimante à tickets</em>).
+      Pour la console locale, le pilote constructeur (Epson Advanced Printer Driver) donne le
+      meilleur rendu des tickets HTML ; il est détecté automatiquement une fois installé.
+    </p>
+    <p class="mb-0 text-muted">
+      Le ticket test ci-dessus s'ouvre dans un nouvel onglet et se lance à l'impression :
+      vérifiez la lisibilité, la largeur et la coupe du papier.
+    </p>
+  </div>
+</div>
+{% endblock %}

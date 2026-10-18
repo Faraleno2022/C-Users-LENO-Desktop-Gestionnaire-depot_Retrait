@@ -353,6 +353,10 @@
           <a href="{% url 'web:print_ticket' %}?kind=retrait&auto=1" target="_blank" class="btn btn-dark">
             <i class="bi bi-printer"></i> Imprimer le ticket (caisse)
           </a>
+          {% if auto_print_kind %}
+            <iframe src="{% url 'web:print_ticket' %}?kind={{ auto_print_kind }}&auto=1"
+                    title="Ticket" style="position:fixed;width:0;height:0;border:0;"></iframe>
+          {% endif %}
           <a href="{% url 'web:withdrawal_invoice' %}" class="btn btn-danger">
             <i class="bi bi-file-earmark-pdf"></i> Facture A4 (PDF)
           </a>

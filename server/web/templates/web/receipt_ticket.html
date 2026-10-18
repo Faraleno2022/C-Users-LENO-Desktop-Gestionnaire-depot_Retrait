@@ -60,6 +60,8 @@
     {% else %}
       <div class="center big">{{ company_name }}</div>
     {% endif %}
+    {% if company_address %}<div class="center muted">{{ company_address }}</div>{% endif %}
+    {% if company_phone %}<div class="center muted">{{ company_phone }}</div>{% endif %}
     <div class="center muted">{{ titre }}</div>
     <div class="sep"></div>
 
@@ -89,7 +91,7 @@
     <div class="row tot"><span class="l">Solde restant</span><span class="r">{{ solde_apres|money }}</span></div>
     <div class="sep"></div>
 
-    <div class="center muted">Merci de votre confiance</div>
+    {% if ticket_footer %}<div class="center muted">{{ ticket_footer }}</div>{% endif %}
     <div class="center">{{ company_name }}</div>
     <div class="center muted" style="margin-top:6px;">. . .</div>
   </div>

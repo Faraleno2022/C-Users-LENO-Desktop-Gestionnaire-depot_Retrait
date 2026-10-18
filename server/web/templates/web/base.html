@@ -204,6 +204,9 @@
         <a href="{% url 'web:devices' %}" class="sidebar-link {% if request.resolver_match.url_name == 'devices' %}active{% endif %}">
           <i class="bi bi-hdd-network"></i> Postes & jetons
         </a>
+        <a href="{% url 'web:ticket_settings' %}" class="sidebar-link {% if request.resolver_match.url_name == 'ticket_settings' %}active{% endif %}">
+          <i class="bi bi-printer"></i> Impression des tickets
+        </a>
         <a href="{% url 'web:journal' %}" class="sidebar-link {% if request.resolver_match.url_name == 'journal' %}active{% endif %}">
           <i class="bi bi-journal-text"></i> Journal d'audit
         </a>

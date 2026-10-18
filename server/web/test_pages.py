@@ -54,6 +54,43 @@ class PageTests(TestCase):
         device.save()
         self.assertEqual(self.client.get(reverse("web:device_setup_script", args=[device.pk])).status_code, 403)
 
+    def test_ticket_settings_page_and_test_ticket(self):
+        from web.ticket_settings import get_ticket_settings
+        url = reverse("web:ticket_settings")
+        self.assertEqual(self.client.get(url).status_code, 200)
+        # Valeurs par défaut : largeur 80, pas d'impression auto, nom = marque.
+        cfg = get_ticket_settings()
+        self.assertEqual((cfg["paper_width"], cfg["auto_print"]), ("80", False))
+        self.assertTrue(cfg["company_name"])
+        # Enregistrement.
+        response = self.client.post(url, {
+            "action": "save", "company_name": "Boutique <Test>", "company_phone": "+224 600",
+            "company_address": "Conakry", "ticket_footer": "A bientot", "paper_width": "58",
+            "auto_print": "1",
+        })
+        self.assertEqual(response.status_code, 302)
+        cfg = get_ticket_settings()
+        self.assertEqual(cfg["company_name"], "Boutique <Test>")
+        self.assertEqual((cfg["paper_width"], cfg["auto_print"]), ("58", True))
+        # Le ticket test reprend l'en-tête, le pied et la largeur par défaut.
+        ticket = self.client.get(reverse("web:print_ticket"), {"kind": "test", "auto": "1"})
+        self.assertEqual(ticket.status_code, 200)
+        body = ticket.content.decode()
+        self.assertIn("Boutique &lt;Test&gt;", body)
+        self.assertIn("+224 600", body)
+        self.assertIn("A bientot", body)
+        self.assertIn("TICKET DE TEST", body)
+        self.assertIn("--tw: 48mm", body)            # largeur 58 mm par défaut
+        self.assertIn("window.print()", body)       # auto=1
+        self.assertIn("--tw: 72mm", self.client.get(reverse("web:print_ticket"), {"kind": "test", "w": "80"}).content.decode())
+        # Impression automatique : un dépôt validé ouvre le ticket dans un cadre, une seule fois.
+        response = self.client.post(reverse("web:deposit_new"), {"matricule": "CLIENT", "montant": "1000"})
+        self.assertEqual(response.status_code, 302)
+        page = self.client.get(reverse("web:deposit_new")).content.decode()
+        self.assertIn('<iframe src="/recu/ticket/?kind=depot&auto=1"', page)
+        self.assertNotIn("{#", page)
+        self.assertNotIn("<iframe", self.client.get(reverse("web:deposit_new")).content.decode())
+
     def test_export_pages_return_valid_files(self):
         for page in ("transactions", "sales", "products", "stock_movements", "inventory"):
             for fmt in ("pdf", "xlsx"):

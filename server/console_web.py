@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.35"
+APP_VERSION = "1.0.36"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -208,6 +208,18 @@ def _windows_printers() -> tuple[str, list[str]]:
     return default, names
 
 
+def _configured_printer() -> str:
+    """Imprimante choisie dans la console (printer_config.json du dossier de données)."""
+    data_dir = os.environ.get("EMAB_DATA_DIR")
+    if not data_dir:
+        return ""
+    try:
+        data = json.loads((Path(data_dir) / "printer_config.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return ""
+    return str((data or {}).get("printer") or "").strip()
+
+
 def _pick_receipt_printer() -> str:
     """Nom de la meilleure imprimante physique pour les tickets, sinon ''.
 
@@ -239,8 +251,10 @@ def _pick_receipt_printer() -> str:
     default, names = _windows_printers()
 
     # Une valeur explicite permet aussi aux installations multi-imprimantes de
-    # verrouiller la caisse sur un nom précis sans dépendre de l'ordre Windows.
-    requested = os.environ.get("EMAB_RECEIPT_PRINTER", "").strip()
+    # verrouiller la caisse sur un nom précis sans dépendre de l'ordre Windows :
+    # variable d'environnement, sinon réglage saisi dans la console
+    # (Administration → Impression des tickets, fichier printer_config.json).
+    requested = os.environ.get("EMAB_RECEIPT_PRINTER", "").strip() or _configured_printer()
     if requested:
         for name in names:
             if name.casefold() == requested.casefold() and not is_virtual(name):

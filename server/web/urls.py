@@ -51,6 +51,7 @@ urlpatterns = [
     path("clients/<int:pk>/basculer/", views.client_toggle, name="client_toggle"),
     path("postes/", views.devices_list, name="devices"),
     path("postes/<int:pk>/configurer.cmd", views.device_setup_script, name="device_setup_script"),
+    path("parametres/impression/", views.ticket_settings_view, name="ticket_settings"),
     path("utilisateurs/", views.users_list, name="users"),
     path("utilisateurs/nouveau/", views.user_new, name="user_new"),
     path("utilisateurs/<int:pk>/modifier/", views.user_edit, name="user_edit"),

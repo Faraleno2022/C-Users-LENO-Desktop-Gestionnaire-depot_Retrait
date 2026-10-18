@@ -479,6 +479,7 @@ def deposit_new(request):
                 }
                 # On vide le formulaire en redirigeant (PRG pattern).
                 request.session["last_deposit"] = last_receipt
+                _queue_auto_ticket(request, "depot")
                 return redirect("web:deposit_new")
         except (ValueError, TypeError) as e:
             error = str(e)
@@ -490,7 +491,16 @@ def deposit_new(request):
         "error": error,
         "remote": r,
         "last_receipt": last_receipt,
+        "auto_print_kind": request.session.pop("ticket_auto_kind", None),
     })
+
+
+def _queue_auto_ticket(request, kind: str) -> None:
+    """Après une validation : demande l'impression automatique du ticket au
+    prochain affichage de la page, si le réglage est actif."""
+    from web.ticket_settings import get_ticket_settings
+    if get_ticket_settings()["auto_print"]:
+        request.session["ticket_auto_kind"] = kind
 
 
 @login_required(login_url="web:login")
@@ -707,6 +717,7 @@ def withdrawal_new(request):
                         for l in lines
                     ],
                 }
+                _queue_auto_ticket(request, "retrait")
                 return redirect("web:withdrawal_new")
         except (ValueError, TypeError) as e:
             error = str(e)
@@ -718,6 +729,7 @@ def withdrawal_new(request):
         "last_receipt": last_receipt,
         "balance_preview": balance_preview,
         "matricule_preview": matricule_preview,
+        "auto_print_kind": request.session.pop("ticket_auto_kind", None),
     })
 
 
@@ -788,11 +800,22 @@ def print_ticket(request):
     en HTML optimisé pour l'impression sur rouleau. Le navigateur envoie le rendu
     à l'imprimante thermique installée comme imprimante Windows.
     """
+    from web.ticket_settings import get_ticket_settings
+    settings_cfg = get_ticket_settings()
     kind = (request.GET.get("kind") or "retrait").strip()
-    width = "58" if (request.GET.get("w") or "80").strip() == "58" else "80"
+    requested_width = (request.GET.get("w") or "").strip()
+    width = requested_width if requested_width in ("80", "58") else settings_cfg["paper_width"]
     auto = request.GET.get("auto") == "1"
 
-    if kind == "depot":
+    if kind == "test":
+        # Ticket de démonstration (Administration → Impression des tickets).
+        data = {
+            "id": 0, "matricule": "TEST-000", "telephone": "",
+            "created_at": timezone.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "agent_nom": (request.session.get("remote_user") or {}).get("nom_complet") or "Test",
+            "montant": 1234567, "solde_apres": 1234567, "is_sale": False, "lines": [],
+        }
+    elif kind == "depot":
         data = request.session.get("last_deposit")
     else:
         data = request.session.get("last_withdrawal")
@@ -802,7 +825,10 @@ def print_ticket(request):
 
     montant = float(data.get("montant") or 0)
     solde_apres = float(data.get("solde_apres") or 0)
-    if kind == "depot":
+    if kind == "test":
+        solde_avant = 0.0
+        titre, signe = "TICKET DE TEST", "+"
+    elif kind == "depot":
         solde_avant = subtract(solde_apres, montant)
         titre, signe = "REÇU DE DÉPÔT", "+"
     else:
@@ -825,8 +851,50 @@ def print_ticket(request):
         "montant": montant,
         "solde_avant": solde_avant,
         "solde_apres": solde_apres,
-        "company_name": "EMAB-SKS",
+        "company_name": settings_cfg["company_name"],
+        "company_address": settings_cfg["company_address"],
+        "company_phone": settings_cfg["company_phone"],
+        "ticket_footer": settings_cfg["ticket_footer"],
         "logo_uri": logo,
+    })
+
+
+@login_required(login_url="web:login")
+@role_required("super_admin", "admin")
+def ticket_settings_view(request):
+    """Administration → Impression des tickets.
+
+    En-tête et pied de page des tickets, largeur de rouleau par défaut,
+    impression automatique après validation ; sur la console locale, choix
+    de l'imprimante Windows (printer_config.json, lu au lancement).
+    """
+    from web import ticket_settings as ts
+
+    if request.method == "POST" and (request.POST.get("action") or "") == "save":
+        ts.save_ticket_settings(
+            company_name=request.POST.get("company_name") or "",
+            company_address=request.POST.get("company_address") or "",
+            company_phone=request.POST.get("company_phone") or "",
+            ticket_footer=request.POST.get("ticket_footer") or "",
+            paper_width=request.POST.get("paper_width") or "80",
+            auto_print=request.POST.get("auto_print") == "1",
+        )
+        if ts.is_local_console() and "printer" in request.POST:
+            ts.set_local_printer(request.POST.get("printer") or "")
+        _log_audit(request, "ticket_settings_update", target_type="settings",
+                   target_id="tickets", details=f"largeur={request.POST.get('paper_width')}")
+        messages.success(request, "Réglages d'impression enregistrés.")
+        return redirect("web:ticket_settings")
+
+    default_printer, printers = ts.list_local_printers()
+    return render(request, "web/ticket_settings.html", {
+        "cfg": ts.get_ticket_settings(),
+        "is_local": ts.is_local_console(),
+        "printers": printers,
+        "default_printer": default_printer,
+        "local_printer": ts.get_local_printer(),
+        "detected": ts.detected_local_printer(),
+        "remote": _remote(request),
     })
 
 

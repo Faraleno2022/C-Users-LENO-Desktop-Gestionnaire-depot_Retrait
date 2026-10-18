@@ -377,3 +377,13 @@ class ReconciliationSnapshotChunk(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['run', 'table_name', 'sequence'], name='unique_reconciliation_chunk')]
+
+
+class WebSetting(models.Model):
+    """Réglage clé/valeur propre à cette console (impression des tickets,
+    coordonnées société…) ; jamais synchronisé vers les postes."""
+    key = models.CharField(max_length=64, unique=True)
+    value = models.TextField(blank=True, default="")
+
+    def __str__(self) -> str:  # pragma: no cover - affichage admin
+        return f"{self.key} = {self.value[:40]}"
