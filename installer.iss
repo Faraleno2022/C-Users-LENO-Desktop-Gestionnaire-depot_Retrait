@@ -38,6 +38,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "dist\EMAB-Gestionnaire\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Installation de l'imprimante à tickets en un clic (droits admin demandés au lancement)
 Source: "Installer_Imprimante_Ticket.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Diagnostic_Imprimante.cmd"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 ; Raccourci bureau
@@ -45,6 +46,7 @@ Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 ; Menu Démarrer
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{userprograms}\Installer l'imprimante à tickets"; Filename: "{app}\Installer_Imprimante_Ticket.cmd"; WorkingDir: "{app}"
+Name: "{userprograms}\Diagnostic de l'imprimante à tickets"; Filename: "{app}\Diagnostic_Imprimante.cmd"; WorkingDir: "{app}"
 Name: "{userprograms}\Désinstaller {#MyAppName}"; Filename: "{uninstallexe}"
 
 [Run]

@@ -95,6 +95,16 @@ administrateur, puis le script :
 
 Options : `-PaperWidth 58`, `-PrinterName "Caisse 2"`, `-NoTest`.
 
+### Le ticket ne sort pas : diagnostic
+
+Double-cliquez sur **`Diagnostic_Imprimante.cmd`** (fichier autonome, à copier
+seul sur le poste ; aussi dans le menu Démarrer). Il contrôle le service
+d'impression, les imprimantes installées, le câble USB, les travaux bloqués,
+l'imprimante choisie par l'application et sa version, puis écrit
+`diagnostic_imprimante.txt` sur le Bureau, à envoyer en cas de doute.
+Options : `-Test` imprime un ticket de test, `-Repair` vide la file bloquée et
+relance le service d'impression (droits administrateur demandés).
+
 ### Installation manuelle
 
 1. Installez le pilote Epson **Advanced Printer Driver 6 for TM-T20III**
