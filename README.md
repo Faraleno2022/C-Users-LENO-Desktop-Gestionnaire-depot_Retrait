@@ -79,7 +79,9 @@ reçu** ouvre la boîte de dialogue Windows classique.
 Branchez l'imprimante en USB, allumez-la, puis double-cliquez sur
 **`Installer_Imprimante_Ticket.cmd`** (racine du projet, ou menu Démarrer →
 *Installer l'imprimante à tickets* après installation du Gestionnaire).
-Windows demande les droits administrateur, puis le script :
+Le fichier est autonome (le script PowerShell y est embarqué) : copiez-le
+seul sur le poste, par clé USB ou messagerie. Windows demande les droits
+administrateur, puis le script :
 
 1. détecte une imprimante à tickets déjà installée (pilote Epson
    « Receipt », POS…) et la réutilise ;
