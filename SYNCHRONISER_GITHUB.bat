@@ -5,13 +5,13 @@ setlocal EnableExtensions EnableDelayedExpansion
 rem ============================================================
 rem  SYNCHRONISER_GITHUB.bat
 rem  Double-cliquer pour envoyer le projet sur GitHub :
-rem    https://github.com/Faraleno2022/EMAB_SKS.git
+rem    https://github.com/Faraleno2022/SKS_EMAB.git
 rem  1. Enregistre les modifications locales (commit)
 rem  2. Récupère les modifications distantes (pull --rebase)
 rem  3. Envoie le tout sur GitHub (push)
 rem ============================================================
 
-set "DEPOT=https://github.com/Faraleno2022/EMAB_SKS.git"
+set "DEPOT=https://github.com/Faraleno2022/SKS_EMAB.git"
 set "BRANCHE=main"
 
 cd /d "%~dp0"
@@ -96,7 +96,7 @@ git push -u origin "%BRANCHE%" || goto :fin_erreur
 echo.
 echo ============================================================
 echo   Synchronisation terminee avec succes.
-echo   https://github.com/Faraleno2022/EMAB_SKS
+echo   https://github.com/Faraleno2022/SKS_EMAB
 echo ============================================================
 echo.
 pause
