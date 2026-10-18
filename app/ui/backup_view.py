@@ -10,6 +10,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -37,6 +38,7 @@ from app.services import (
     user_service,
 )
 from app.ui.widgets.dialogs import access_denied, confirm, error, info
+from app.utils import receipt_printer
 
 
 class BackupView(QWidget):
@@ -106,6 +108,59 @@ class BackupView(QWidget):
         save_company_btn.clicked.connect(self._save_company_info)
         cl.addWidget(save_company_btn, alignment=Qt.AlignLeft)
         layout.addWidget(c_card)
+
+        # --- Impression des tickets (imprimante thermique) ---------------
+        p_card = QFrame()
+        p_card.setProperty("class", "card")
+        pl = QVBoxLayout(p_card)
+        pl.setContentsMargins(16, 12, 16, 12)
+        pl.addWidget(self._h2("Impression des tickets (imprimante thermique Epson, POS…)"))
+        p_hint = QLabel(
+            "Le reçu est envoyé directement à l'imprimante à tickets, sans boîte de "
+            "dialogue, et le papier est coupé. « Automatique » choisit le pilote "
+            "thermique détecté (ex. EPSON TM-T20III Receipt). Sans imprimante à "
+            "tickets, le bouton « Imprimer le reçu » ouvre la boîte de dialogue classique."
+        )
+        p_hint.setWordWrap(True)
+        p_hint.setStyleSheet("color:#6b7280;")
+        pl.addWidget(p_hint)
+        print_cfg = settings_service.get_print_config()
+        p_form = QFormLayout()
+        p_form.setLabelAlignment(Qt.AlignRight)
+        self.printer_combo = QComboBox()
+        self.printer_combo.setMinimumWidth(320)
+        self.paper_width_combo = QComboBox()
+        self.paper_width_combo.addItem("80 mm (standard)", "80")
+        self.paper_width_combo.addItem("58 mm", "58")
+        self.paper_width_combo.setCurrentIndex(1 if print_cfg["paper_width"] == "58" else 0)
+        self.auto_print_cb = QCheckBox("Imprimer le reçu automatiquement après chaque validation")
+        self.auto_print_cb.setChecked(print_cfg["auto_print"])
+        self.open_drawer_cb = QCheckBox("Ouvrir le tiroir-caisse branché sur l'imprimante")
+        self.open_drawer_cb.setChecked(print_cfg["open_drawer"])
+        self.printer_detected_label = QLabel()
+        self.printer_detected_label.setStyleSheet("color:#6b7280;")
+        p_form.addRow("Imprimante", self.printer_combo)
+        p_form.addRow("Largeur du papier", self.paper_width_combo)
+        p_form.addRow("", self.auto_print_cb)
+        p_form.addRow("", self.open_drawer_cb)
+        p_form.addRow("Détectée", self.printer_detected_label)
+        pl.addLayout(p_form)
+        p_actions = QHBoxLayout()
+        save_print_btn = QPushButton("Enregistrer")
+        save_print_btn.setProperty("class", "secondary")
+        save_print_btn.clicked.connect(self._save_print_config)
+        refresh_printers_btn = QPushButton("Actualiser la liste")
+        refresh_printers_btn.setProperty("class", "secondary")
+        refresh_printers_btn.clicked.connect(self._refresh_printers)
+        test_print_btn = QPushButton("Imprimer un ticket test")
+        test_print_btn.clicked.connect(self._print_test_ticket)
+        p_actions.addWidget(save_print_btn)
+        p_actions.addWidget(refresh_printers_btn)
+        p_actions.addWidget(test_print_btn)
+        p_actions.addStretch()
+        pl.addLayout(p_actions)
+        layout.addWidget(p_card)
+        self._refresh_printers(selected=print_cfg["printer"])
 
         # --- System check card ------------------------------------------
         sys_card = QFrame()
@@ -289,6 +344,56 @@ class BackupView(QWidget):
         lbl.setProperty("class", "h2")
         lbl.setFont(QFont("Segoe UI", 13, QFont.Bold))
         return lbl
+
+    # ------------------------------------------------------- impression tickets
+    def _refresh_printers(self, selected: Optional[str] = None) -> None:
+        """Recharge la liste des imprimantes Windows et l'imprimante détectée."""
+        if selected is None:
+            selected = self.printer_combo.currentData() or ""
+        default, names = receipt_printer.windows_printers()
+        self.printer_combo.blockSignals(True)
+        self.printer_combo.clear()
+        self.printer_combo.addItem("Automatique (imprimante à tickets détectée)", "")
+        for name in names:
+            suffix = "  — par défaut Windows" if name == default else ""
+            self.printer_combo.addItem(name + suffix, name)
+        if selected and self.printer_combo.findData(selected) < 0:
+            self.printer_combo.addItem(f"{selected}  — non détectée", selected)
+        idx = self.printer_combo.findData(selected or "")
+        self.printer_combo.setCurrentIndex(max(0, idx))
+        self.printer_combo.blockSignals(False)
+        detected = receipt_printer.detect_receipt_printer(selected or "")
+        self.printer_detected_label.setText(
+            detected or "aucune imprimante à tickets (brancher l'imprimante et installer son pilote)"
+        )
+
+    def _save_print_config(self) -> None:
+        settings_service.set_print_config(
+            printer=self.printer_combo.currentData() or "",
+            paper_width=self.paper_width_combo.currentData() or "80",
+            auto_print=self.auto_print_cb.isChecked(),
+            open_drawer=self.open_drawer_cb.isChecked(),
+        )
+        self._refresh_printers()
+        info(self, "Impression des tickets", "Réglages enregistrés.")
+
+    def _print_test_ticket(self) -> None:
+        printer_name = self.printer_combo.currentData() or ""
+        company = settings_service.get_company_info()
+        try:
+            used = receipt_printer.print_receipt(
+                receipt_printer.test_receipt(printer_name), company,
+                printer=printer_name,
+                paper_width=self.paper_width_combo.currentData() or "80",
+                open_drawer=self.open_drawer_cb.isChecked(),
+            )
+        except receipt_printer.NoReceiptPrinter as exc:
+            error(self, "Impression des tickets", str(exc))
+            return
+        except receipt_printer.ReceiptPrintError as exc:
+            error(self, "Impression des tickets", str(exc))
+            return
+        info(self, "Impression des tickets", f"Ticket test envoyé à « {used} ».")
 
     # ---------------------------------------------------------------- data
     def refresh(self) -> None:

@@ -66,6 +66,36 @@ main.py                 # Point d'entrée
 - Bons et documents de stock en PDF : bon d'entrée, bon de sortie, fiche article (avec historique) et fiche d'inventaire (colonnes comptage physique / écart), avec en-tête société configurable — enregistrés dans `exports/bons/`
 - Synchronisation montante vers un serveur en ligne (statuts : en attente / synchronisé)
 
+## Imprimante à tickets (Epson TM-T20III et autres thermiques)
+
+Les reçus de dépôt/retrait et de vente sont envoyés **directement** à
+l'imprimante à tickets en ESC/POS (sans boîte de dialogue, papier coupé en fin
+de ticket), dès la validation si l'option *Imprimer automatiquement* est active
+(c'est le cas par défaut). Sans imprimante à tickets, le bouton **Imprimer le
+reçu** ouvre la boîte de dialogue Windows classique.
+
+### Installer l'imprimante sur le poste
+
+1. Installez le pilote Epson **Advanced Printer Driver (APD)** pour TM-T20III
+   depuis le site Epson (support → TM-T20III → Pilotes). L'imprimante apparaît
+   dans Windows sous le nom **EPSON TM-T20III Receipt**.
+2. Branchez l'imprimante (USB) et allumez-la. Imprimez une page de test depuis
+   Windows (Paramètres → Imprimantes) pour vérifier le câblage.
+3. Dans l'application : **Administration → Impression des tickets**. Laissez
+   *Automatique* (le pilote thermique est détecté) ou choisissez l'imprimante
+   dans la liste, réglez la largeur (80 mm par défaut), puis **Imprimer un
+   ticket test**. Si le ticket sort lisible et coupé, c'est terminé.
+
+La détection automatique reconnaît les pilotes dont le nom contient `Receipt`,
+`POS`, `Thermal`, `Ticket`, `EPSON TM`, `TM-T`, `XPrinter`, `Rongta`, `POZER`…
+Pour un pilote au nom quelconque (ex. *Generic / Text Only*), sélectionnez-le
+explicitement dans la liste. La variable d'environnement `EMAB_RECEIPT_PRINTER`
+impose aussi un nom d'imprimante (application de bureau et console web).
+
+L'en-tête du ticket reprend les **Coordonnées société** (nom, adresse,
+téléphone, pied de page) saisies dans Administration. Une case permet
+d'ouvrir le tiroir-caisse branché sur l'imprimante à chaque ticket.
+
 ## Synchronisation en ligne (Phase 2)
 
 Le serveur Django REST (dossier `server/`) reçoit les données poussées par les

@@ -220,10 +220,12 @@ def _pick_receipt_printer() -> str:
     imprimante bureautique par défaut ne prend toutefois pas la place d'une
     caisse thermique détectée.
     """
-    virtual = ("pdf", "xps", "onenote", "fax", "anydesk")
+    virtual = ("pdf", "xps", "onenote", "fax", "anydesk", "send to")
+    # Même liste que app/utils/receipt_printer.py (application de bureau).
     thermal = (
         "pos", "thermal", "ticket", "receipt", "caisse", "58mm", "80mm",
         "xprinter", "rongta", "pozer", "tp150",
+        "epson tm", "tm-t", "tm-m", "tm-u", "tm-p", "tm-l",
     )
 
     def is_virtual(name: str) -> bool:

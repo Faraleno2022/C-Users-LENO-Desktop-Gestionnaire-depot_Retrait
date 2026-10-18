@@ -41,6 +41,17 @@ class ReceiptPrinterSelectionTests(unittest.TestCase):
         ):
             self.assertEqual(console_web._pick_receipt_printer(), "POZER TP150")
 
+    def test_epson_tm_t20iii_is_detected_as_thermal(self):
+        printers = (
+            "HP LaserJet",
+            ["Microsoft Print to PDF", "HP LaserJet", "EPSON TM-T20III Receipt"],
+        )
+        with (
+            patch.object(console_web, "_windows_printers", return_value=printers),
+            patch.dict(os.environ, {"EMAB_RECEIPT_PRINTER": ""}),
+        ):
+            self.assertEqual(console_web._pick_receipt_printer(), "EPSON TM-T20III Receipt")
+
     def test_virtual_printers_are_not_selected(self):
         printers = (
             "Microsoft Print to PDF",

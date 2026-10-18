@@ -5,7 +5,6 @@ from typing import Callable, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QBoxLayout,
@@ -29,7 +28,11 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.user import User
-from app.services import cash_service, product_service, sale_service, transaction_service
+from app.services import (
+    cash_service, product_service, sale_service, settings_service, transaction_service,
+)
+from app.ui import receipt_printing
+from app.utils import receipt_printer
 from app.utils.helpers import format_money
 
 
@@ -342,37 +345,38 @@ class SalesView(QWidget):
             "</div>"
         )
 
-    def _show_receipt(self, sale) -> None:
+    def _build_receipt(self, sale) -> receipt_printer.Receipt:
         cash = sale.mode_paiement == "caisse"
-        html = f"""
-        <div style='font-family:Segoe UI; padding: 6px;'>
-          <div style='text-align:center; border-bottom: 2px dashed #cbd5e1; padding-bottom:10px;'>
-            <div style='font-size:16px; font-weight:bold;'>REÇU DE VENTE</div>
-            <div style='color:#6b7280; font-size:11px;'>N° {sale.id} — {sale.created_at}</div>
-          </div>
-          <div style='font-size:20px; font-weight:bold; color:#2563eb; text-align:center; margin:14px 0;'>
-            {sale.product_nom}<br>{format_money(sale.montant_total)}
-          </div>
-          <table style='width:100%; font-size:13px;' cellpadding='4'>
-            <tr><td><b>{'Payé par' if cash else 'Matricule'}</b></td><td>{'Caisse (espèces)' if cash else sale.matricule}</td></tr>
-            <tr><td><b>Téléphone</b></td><td>{sale.telephone or '—'}</td></tr>
-            <tr><td><b>Quantité</b></td><td>{sale.quantite:g} × {format_money(sale.prix_unitaire)}</td></tr>
-            <tr><td><b>{'Solde de la caisse' if cash else 'Nouveau solde'}</b></td><td><b>{format_money(cash_service.get_balance() if cash else sale.solde_apres)}</b></td></tr>
-            <tr><td><b>Agent</b></td><td>{sale.agent_nom}</td></tr>
-            <tr><td><b>Référence</b></td><td style='font-size:10px;'>{sale.uuid}</td></tr>
-          </table>
-          <div style='text-align:center; border-top: 2px dashed #cbd5e1; padding-top:10px; color:#6b7280; font-size:11px;'>
-            Merci pour votre confiance.
-          </div>
-        </div>
-        """
-        self.receipt_view.setHtml(html)
+        solde = cash_service.get_balance() if cash else sale.solde_apres
+        return receipt_printer.Receipt(
+            title="REÇU DE VENTE",
+            number=f"N° {sale.id}",
+            date=str(sale.created_at),
+            highlight_label=sale.product_nom,
+            highlight_value=format_money(sale.montant_total),
+            highlight_color="#2563eb",
+            rows=[
+                ("Payé par" if cash else "Matricule", "Caisse (espèces)" if cash else sale.matricule),
+                ("Téléphone", sale.telephone or "—"),
+                ("Quantité", f"{sale.quantite:g} x {format_money(sale.prix_unitaire)}"),
+                ("Solde de la caisse" if cash else "Nouveau solde", format_money(solde)),
+                ("Agent", sale.agent_nom),
+            ],
+            reference=sale.uuid,
+        )
+
+    def _show_receipt(self, sale) -> None:
+        self.last_receipt = self._build_receipt(sale)
+        self.receipt_view.setHtml(
+            receipt_printer.render_html(self.last_receipt, settings_service.get_company_info())
+        )
         self.last_sale = sale
         self.print_btn.setEnabled(True)
+        if settings_service.get_print_config()["auto_print"]:
+            receipt_printing.print_receipt(self, self.last_receipt, auto=True)
 
     def _print_receipt(self) -> None:
-        printer = QPrinter(QPrinter.HighResolution)
-        dlg = QPrintDialog(printer, self)
-        if dlg.exec() != QPrintDialog.Accepted:
+        receipt = getattr(self, "last_receipt", None)
+        if receipt is None:
             return
-        self.receipt_view.document().print_(printer)
+        receipt_printing.print_receipt(self, receipt)

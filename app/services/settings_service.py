@@ -32,6 +32,12 @@ KEY_AUTO_SYNC_INTERVAL = "sync.auto_interval_seconds"
 
 DEFAULT_AUTO_SYNC_INTERVAL = 15  # secondes
 
+# Clés de l'impression des tickets (imprimante thermique)
+KEY_RECEIPT_PRINTER = "print.receipt_printer"      # "" = détection automatique
+KEY_RECEIPT_PAPER_WIDTH = "print.paper_width"      # "80" ou "58" (mm)
+KEY_RECEIPT_AUTO_PRINT = "print.auto_print"        # "1" = imprimer après validation
+KEY_RECEIPT_OPEN_DRAWER = "print.open_drawer"      # "1" = ouvrir le tiroir-caisse
+
 # Clés de l'identité de la société (en-tête des bons et documents PDF)
 KEY_COMPANY_NAME = "company.name"
 KEY_COMPANY_ADDRESS = "company.address"
@@ -142,6 +148,33 @@ def get_auto_sync_config() -> dict:
 def set_auto_sync_config(enabled: bool, interval_seconds: int) -> None:
     set_setting(KEY_AUTO_SYNC_ENABLED, "1" if enabled else "0")
     set_setting(KEY_AUTO_SYNC_INTERVAL, str(max(15, int(interval_seconds))))
+
+
+# --- Impression des tickets -------------------------------------------------
+
+def get_print_config() -> dict:
+    """Réglages de l'imprimante à tickets.
+
+    printer : nom Windows imposé ("" = détection automatique). paper_width :
+    "80" ou "58". auto_print : imprimer le reçu dès la validation (activé par
+    défaut : le ticket sort tout seul si une imprimante thermique est présente).
+    """
+    width = (get_setting(KEY_RECEIPT_PAPER_WIDTH, "80") or "80").strip()
+    auto = get_setting(KEY_RECEIPT_AUTO_PRINT)
+    return {
+        "printer": (get_setting(KEY_RECEIPT_PRINTER, "") or "").strip(),
+        "paper_width": width if width in ("80", "58") else "80",
+        "auto_print": True if auto is None else (auto == "1"),
+        "open_drawer": (get_setting(KEY_RECEIPT_OPEN_DRAWER, "0") or "0") == "1",
+    }
+
+
+def set_print_config(printer: str = "", paper_width: str = "80",
+                     auto_print: bool = True, open_drawer: bool = False) -> None:
+    set_setting(KEY_RECEIPT_PRINTER, (printer or "").strip())
+    set_setting(KEY_RECEIPT_PAPER_WIDTH, "58" if str(paper_width) == "58" else "80")
+    set_setting(KEY_RECEIPT_AUTO_PRINT, "1" if auto_print else "0")
+    set_setting(KEY_RECEIPT_OPEN_DRAWER, "1" if open_drawer else "0")
 
 
 # --- Identité de la société (en-tête des documents) -------------------------

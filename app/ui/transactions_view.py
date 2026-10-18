@@ -5,7 +5,6 @@ from typing import Callable, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
-from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QBoxLayout,
     QButtonGroup,
@@ -27,7 +26,9 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.user import User
-from app.services import transaction_service
+from app.services import settings_service, transaction_service
+from app.ui import receipt_printing
+from app.utils import receipt_printer
 from app.utils.helpers import format_money, parse_money
 
 
@@ -232,37 +233,38 @@ class TransactionsView(QWidget):
             "</div>"
         )
 
+    def _build_receipt(self, tx) -> receipt_printer.Receipt:
+        is_depot = tx.type == "depot"
+        return receipt_printer.Receipt(
+            title="REÇU D'OPÉRATION",
+            number=f"N° {tx.id}",
+            date=str(tx.created_at),
+            highlight_label="DÉPÔT" if is_depot else "RETRAIT",
+            highlight_value=format_money(tx.montant),
+            highlight_color="#16a34a" if is_depot else "#dc2626",
+            rows=[
+                ("Matricule", tx.matricule),
+                ("Téléphone", tx.telephone or "—"),
+                ("Nouveau solde", format_money(tx.solde_apres)),
+                ("Agent", tx.agent_nom),
+            ],
+            reference=tx.uuid,
+        )
+
     def _show_receipt(self, tx) -> None:
-        type_label = "DÉPÔT" if tx.type == "depot" else "RETRAIT"
-        color = "#16a34a" if tx.type == "depot" else "#dc2626"
-        html = f"""
-        <div style='font-family:Segoe UI; padding: 6px;'>
-          <div style='text-align:center; border-bottom: 2px dashed #cbd5e1; padding-bottom:10px;'>
-            <div style='font-size:16px; font-weight:bold;'>REÇU D'OPÉRATION</div>
-            <div style='color:#6b7280; font-size:11px;'>N° {tx.id} — {tx.created_at}</div>
-          </div>
-          <div style='font-size:22px; font-weight:bold; color:{color}; text-align:center; margin:14px 0;'>
-            {type_label}<br>{format_money(tx.montant)}
-          </div>
-          <table style='width:100%; font-size:13px;' cellpadding='4'>
-            <tr><td><b>Matricule</b></td><td>{tx.matricule}</td></tr>
-            <tr><td><b>Téléphone</b></td><td>{tx.telephone or '—'}</td></tr>
-            <tr><td><b>Nouveau solde</b></td><td><b>{format_money(tx.solde_apres)}</b></td></tr>
-            <tr><td><b>Agent</b></td><td>{tx.agent_nom}</td></tr>
-            <tr><td><b>Référence</b></td><td style='font-size:10px;'>{tx.uuid}</td></tr>
-          </table>
-          <div style='text-align:center; border-top: 2px dashed #cbd5e1; padding-top:10px; color:#6b7280; font-size:11px;'>
-            Merci pour votre confiance.
-          </div>
-        </div>
-        """
-        self.receipt_view.setHtml(html)
+        self.last_receipt = self._build_receipt(tx)
+        self.receipt_view.setHtml(
+            receipt_printer.render_html(self.last_receipt, settings_service.get_company_info())
+        )
         self.last_tx = tx
         self.print_btn.setEnabled(True)
+        # Ticket thermique imprimé dès la validation si l'option est active
+        # (silencieux s'il n'y a pas d'imprimante à tickets).
+        if settings_service.get_print_config()["auto_print"]:
+            receipt_printing.print_receipt(self, self.last_receipt, auto=True)
 
     def _print_receipt(self) -> None:
-        printer = QPrinter(QPrinter.HighResolution)
-        dlg = QPrintDialog(printer, self)
-        if dlg.exec() != QPrintDialog.Accepted:
+        receipt = getattr(self, "last_receipt", None)
+        if receipt is None:
             return
-        self.receipt_view.document().print_(printer)
+        receipt_printing.print_receipt(self, receipt)
