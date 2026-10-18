@@ -97,8 +97,11 @@ Options : `-PaperWidth 58`, `-PrinterName "Caisse 2"`, `-NoTest`.
 
 ### Installation manuelle
 
-1. Installez le pilote Epson **Advanced Printer Driver (APD)** pour TM-T20III
-   depuis le site Epson (support → TM-T20III → Pilotes). L'imprimante apparaît
+1. Installez le pilote Epson **Advanced Printer Driver 6 for TM-T20III**
+   (fichier `APD_612_T20III_WM.zip`, version 6.12, environ 36 Mo) depuis le
+   [centre de téléchargement Epson, liste Windows 11 64 bits](https://download-center.epson.com/softwares/?device_id=TM-T20III&os=WIN1164&language=fr&region=GN)
+   (Windows 10 : `os=WIN1064`). Attention : un lien avec `os=MAC15` n'affiche
+   que des pilotes macOS, inutilisables sous Windows. L'imprimante apparaît
    dans Windows sous le nom **EPSON TM-T20III Receipt**. Ce pilote est
    recommandé si la **console web locale** imprime aussi des tickets (rendu
    HTML via Chrome), le pilote générique ne convenant qu'au Gestionnaire.
