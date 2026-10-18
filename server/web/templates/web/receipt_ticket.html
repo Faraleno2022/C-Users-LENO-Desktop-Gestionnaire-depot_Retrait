@@ -48,6 +48,7 @@
 <body>
   <div class="toolbar">
     <button class="print" onclick="emabPrint(false)">🖨️ Imprimer</button>
+    {% if direct_url %}<a href="{{ direct_url }}" title="Envoie le ticket à l'imprimante de ce poste (EMAB Console Web 1.0.38 ou plus récente)">⚡ Impression directe</a>{% endif %}
     <div id="emabStatus" style="margin-top:6px;font-size:12px;"></div>
     <a href="?kind={{ kind }}&w={% if width == '58' %}80{% else %}58{% endif %}{% if auto %}&auto=1{% endif %}">
       Passer en {% if width == "58" %}80 mm{% else %}58 mm{% endif %}

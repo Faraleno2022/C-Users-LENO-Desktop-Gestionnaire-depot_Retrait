@@ -353,6 +353,12 @@
           <a href="{% url 'web:print_ticket' %}?kind=retrait&auto=1" target="_blank" class="btn btn-dark">
             <i class="bi bi-printer"></i> Imprimer le ticket (caisse)
           </a>
+          {% if direct_print_url %}
+            <a href="{{ direct_print_url }}" class="btn btn-outline-dark"
+               title="Envoie le ticket à l'imprimante de ce poste (EMAB Console Web 1.0.38 ou plus récente installée)">
+              <i class="bi bi-printer-fill"></i> Imprimer (direct, poste équipé)
+            </a>
+          {% endif %}
           {% if auto_print_kind %}
             <iframe src="{% url 'web:print_ticket' %}?kind={{ auto_print_kind }}&auto=1"
                     title="Ticket" style="position:fixed;width:0;height:0;border:0;"></iframe>

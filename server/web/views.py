@@ -492,6 +492,7 @@ def deposit_new(request):
         "remote": r,
         "last_receipt": last_receipt,
         "auto_print_kind": request.session.pop("ticket_auto_kind", None),
+        "direct_print_url": _direct_print_url(request, "depot") if last_receipt else "",
     })
 
 
@@ -730,6 +731,7 @@ def withdrawal_new(request):
         "balance_preview": balance_preview,
         "matricule_preview": matricule_preview,
         "auto_print_kind": request.session.pop("ticket_auto_kind", None),
+        "direct_print_url": _direct_print_url(request, "retrait") if last_receipt else "",
     })
 
 
@@ -870,7 +872,61 @@ def print_ticket(request):
         "logo_uri": logo,
         # Impression directe ESC/POS : console locale avec imprimante à tickets.
         "escpos": bool(ts.detected_local_printer()),
+        # Site en ligne : lien emab-print: vers l'imprimante du poste équipé.
+        "direct_url": _direct_print_url(request, kind),
     })
+
+
+def _ticket_print_kwargs(request, kind: str):
+    """Arguments de `printers.build_ticket` pour un ticket (None si rien à imprimer).
+
+    Toutes les valeurs sont des textes : le même dictionnaire sert à
+    l'impression locale directe et au lien `emab-print:` du site en ligne.
+    """
+    from web import ticket_settings as ts
+    cfg = ts.get_ticket_settings()
+    payload = _ticket_payload(request, kind)
+    if payload is None:
+        return None
+    r = payload["r"]
+    money = lambda v: f"{float(v or 0):,.0f}".replace(",", " ") + " GNF"
+    lines = r.get("lines") or []
+    if kind == "test":
+        action_label = "TEST"
+    elif kind == "depot":
+        action_label = "DÉPÔT"
+    else:
+        action_label = "VENTE" if r.get("is_sale") else "RETRAIT"
+    return {
+        "company": {"name": cfg["company_name"], "address": cfg["company_address"],
+                    "phone": cfg["company_phone"]},
+        "title": payload["titre"],
+        "number": f"N° {r.get('id') or ''}".strip(),
+        "date": str(r.get("created_at") or ""),
+        "info_rows": [("Matricule", r.get("matricule") or ""),
+                      ("Tél.", r.get("telephone") or ""),
+                      ("Agent", r.get("agent_nom") or "")],
+        "items": [{"name": l.get("product_nom"),
+                   "detail": f"{l.get('quantite')} x {money(l.get('prix'))}",
+                   "total": money(l.get("total"))} for l in lines],
+        "balance_before": money(payload["solde_avant"]),
+        "action_label": action_label,
+        "action_value": f"{payload['signe']}{money(payload['montant'])}".replace("−", "-"),
+        "balance_after": money(payload["solde_apres"]),
+        "footer": [cfg["ticket_footer"], cfg["company_name"]],
+        "paper_width": _ticket_width(request, cfg),
+    }
+
+
+def _direct_print_url(request, kind: str) -> str:
+    """Lien `emab-print:` du ticket, pour le site en ligne ('' sur la console
+    locale, qui imprime en direct, ou si le ticket est trop long pour Windows)."""
+    from web import print_protocol
+    from web import ticket_settings as ts
+    if ts.is_local_console():
+        return ""
+    kwargs = _ticket_print_kwargs(request, kind)
+    return print_protocol.encode_checked(kwargs) if kwargs else ""
 
 
 @login_required(login_url="web:login")
@@ -878,8 +934,9 @@ def print_ticket_escpos(request):
     """Imprime le ticket en ESC/POS directement sur l'imprimante à tickets.
 
     Réservé à la console locale (le serveur en ligne n'a pas accès à
-    l'imprimante du poste). Répond en JSON ; en cas d'échec, la page de
-    ticket retombe sur l'impression du navigateur.
+    l'imprimante du poste ; il propose à la place un lien `emab-print:`).
+    Répond en JSON ; en cas d'échec, la page de ticket retombe sur
+    l'impression du navigateur.
     """
     from web import printers
     from web import ticket_settings as ts
@@ -888,41 +945,12 @@ def print_ticket_escpos(request):
     if not ts.is_local_console():
         return JsonResponse({"ok": False, "error": "Impression directe indisponible sur le serveur en ligne."}, status=403)
 
-    cfg = ts.get_ticket_settings()
     kind = (request.POST.get("kind") or "retrait").strip()
-    payload = _ticket_payload(request, kind)
-    if payload is None:
+    kwargs = _ticket_print_kwargs(request, kind)
+    if kwargs is None:
         return JsonResponse({"ok": False, "error": "Aucun reçu récent à imprimer."}, status=404)
-
-    r = payload["r"]
-    money = lambda v: f"{float(v or 0):,.0f}".replace(",", " ") + " GNF"
-    lines = r.get("lines") or []
-    is_sale = bool(r.get("is_sale"))
-    if kind in ("depot", "test"):
-        action_label = "TEST" if kind == "test" else "DÉPÔT"
-    else:
-        action_label = "VENTE" if is_sale else "RETRAIT"
-    data = printers.build_ticket(
-        company={"name": cfg["company_name"], "address": cfg["company_address"],
-                 "phone": cfg["company_phone"]},
-        title=payload["titre"],
-        number=f"N° {r.get('id') or ''}".strip(),
-        date=str(r.get("created_at") or ""),
-        info_rows=[("Matricule", r.get("matricule") or ""),
-                   ("Tél.", r.get("telephone") or ""),
-                   ("Agent", r.get("agent_nom") or "")],
-        items=[{"name": l.get("product_nom"),
-                "detail": f"{l.get('quantite')} x {money(l.get('prix'))}",
-                "total": money(l.get("total"))} for l in lines],
-        balance_before=money(payload["solde_avant"]),
-        action_label=action_label,
-        action_value=f"{payload['signe']}{money(payload['montant'])}".replace("−", "-"),
-        balance_after=money(payload["solde_apres"]),
-        footer=[cfg["ticket_footer"], cfg["company_name"]],
-        paper_width=_ticket_width(request, cfg),
-    )
     try:
-        used = printers.print_ticket_bytes(data, ts.get_local_printer())
+        used = printers.print_ticket_bytes(printers.build_ticket(**kwargs), ts.get_local_printer())
     except printers.PrintError as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=502)
     return JsonResponse({"ok": True, "printer": used})
@@ -963,6 +991,7 @@ def ticket_settings_view(request):
         "default_printer": default_printer,
         "local_printer": ts.get_local_printer(),
         "detected": ts.detected_local_printer(),
+        "direct_test_url": _direct_print_url(request, "test"),
         "remote": _remote(request),
     })
 

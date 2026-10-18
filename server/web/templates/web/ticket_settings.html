@@ -90,6 +90,31 @@
   </div>
 </form>
 
+{% if not is_local %}
+<div class="card shadow-sm mb-4">
+  <div class="card-body small">
+    <h2 class="h6"><i class="bi bi-lightning-charge"></i> Impression directe depuis ce site</h2>
+    <p class="mb-2">
+      Depuis un navigateur, l'impression d'un ticket exige un vrai pilote graphique : avec le pilote
+      Windows « Generic / Text Only », rien ne sort. Le bouton <strong>Imprimer (direct, poste équipé)</strong>
+      (après chaque dépôt ou retrait) envoie à la place le ticket à l'imprimante du poste, en
+      commandes ESC/POS, sans dialogue et avec coupe du papier.
+    </p>
+    <p class="mb-2">
+      <strong>Poste équipé</strong> = <em>EMAB Console Web 1.0.38 ou plus récente</em> installée sur le PC de la caisse
+      (elle enregistre le lien <code>emab-print:</code> dans Windows) et imprimante à tickets installée
+      (<code>Installer_Imprimante_Ticket.cmd</code>). La première fois, Chrome demande « Ouvrir EMAB-Console-Web ? » :
+      cochez « Toujours autoriser » pour ne plus voir la question.
+    </p>
+    {% if direct_test_url %}
+      <a href="{{ direct_test_url }}" class="btn btn-dark btn-sm"><i class="bi bi-printer-fill"></i> Tester l'impression directe</a>
+    {% else %}
+      <span class="text-muted">Lien de test indisponible.</span>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <div class="card shadow-sm">
   <div class="card-body small">
     <h2 class="h6"><i class="bi bi-question-circle"></i> Installer l'imprimante sur un poste</h2>

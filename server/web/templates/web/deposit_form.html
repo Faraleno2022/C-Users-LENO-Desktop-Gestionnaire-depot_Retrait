@@ -165,6 +165,12 @@
           <a href="{% url 'web:print_ticket' %}?kind=depot&auto=1" target="_blank" class="btn btn-dark btn-sm">
             <i class="bi bi-printer"></i> Imprimer le ticket (caisse)
           </a>
+          {% if direct_print_url %}
+            <a href="{{ direct_print_url }}" class="btn btn-outline-dark btn-sm"
+               title="Envoie le ticket à l'imprimante de ce poste (EMAB Console Web 1.0.38 ou plus récente installée)">
+              <i class="bi bi-printer-fill"></i> Imprimer (direct, poste équipé)
+            </a>
+          {% endif %}
           {% if auto_print_kind %}
             {% comment %}Impression automatique (Administration → Impression des tickets) :
             le ticket se charge dans un cadre invisible et se lance à l'impression, sans popup.{% endcomment %}

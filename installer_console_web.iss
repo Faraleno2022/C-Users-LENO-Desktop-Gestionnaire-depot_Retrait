@@ -4,7 +4,7 @@
 
 #define MyAppName "EMAB Console Web"
 #define MyAppPublisher "EMAB-SKS"
-#define MyAppVersion "1.0.37"
+#define MyAppVersion "1.0.38"
 #define MyAppExeName "EMAB-Console-Web.exe"
 
 [Setup]
@@ -44,6 +44,15 @@ Name: "startupicon"; Description: "Démarrer automatiquement avec Windows (synch
 Source: "server\dist\EMAB-Console-Web\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Lanceur silencieux placé dans le démarrage Windows si la tâche est cochée.
 Source: "installer_assets\EMAB-Console-Web-demarrage.vbs"; DestDir: "{userstartup}"; Tasks: startupicon; Flags: ignoreversion
+
+[Registry]
+; Protocole « emab-print: » : un clic sur « Imprimer (direct) » du site en ligne
+; lance cette console en mode impression (ESC/POS, sans pilote Epson graphique).
+; Enregistré pour l'utilisateur courant (HKCU) : aucun droit administrateur.
+Root: HKCU; Subkey: "Software\Classes\emab-print"; ValueType: string; ValueName: ""; ValueData: "URL:EMAB impression de ticket"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\emab-print"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\emab-print\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKCU; Subkey: "Software\Classes\emab-print\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" --print-url ""%1"""
 
 [Icons]
 Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon

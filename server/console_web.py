@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.37"
+APP_VERSION = "1.0.38"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -310,6 +310,15 @@ def main() -> int:
     frozen = bool(getattr(sys, "frozen", False))
     base = Path(getattr(sys, "_MEIPASS", "")) if frozen else Path(__file__).resolve().parent
     sys.path.insert(0, str(base))
+
+    # Impression directe depuis le site en ligne : Windows lance
+    # « EMAB-Console-Web.exe --print-url "emab-print:v1.…" » quand on clique sur
+    # le bouton « Imprimer (direct) ». On imprime le ticket et on quitte AVANT
+    # toute autre initialisation : sans toucher au journal console.log, au
+    # serveur ni à l'interface d'une console éventuellement déjà ouverte.
+    if "--print-url" in sys.argv:
+        from web import print_protocol
+        return print_protocol.run(sys.argv)
 
     # --- Dossier de données persistant (jamais dans le bundle temporaire) ---
     env_dir = os.environ.get("EMAB_DATA_DIR")
