@@ -59,11 +59,44 @@ function Is-Thermal([string]$name) {
     return $false
 }
 
-$printers = @(Get-Printer | Select-Object -ExpandProperty Name)
+$queues = @(Get-Printer)
+$printers = @($queues | Select-Object -ExpandProperty Name)
 $existing = @($printers | Where-Object { Is-Thermal $_ })
 $chosen = $null
 
-if ($existing.Count -gt 0) {
+# Imprimante USB branchee mais sans file d'impression (ex. TM-T20III que
+# Windows vient de reconnaitre via "Prise en charge d'impression USB") :
+# on l'installe sur SON port, meme si une ancienne thermique existe deja.
+$newDev = $null
+$usbPrintDevs = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+                  Where-Object { $_.InstanceId -like "USBPRINT\*" })
+foreach ($d in $usbPrintDevs) {
+    if ($d.InstanceId -match "&(USB\d{3})$") {
+        $p = $Matches[1]
+        $used = @($queues | Where-Object { $_.PortName -eq $p })
+        if ($used.Count -eq 0) {
+            $model = ($d.InstanceId -split "\\")[1] -replace "^EPSON", "EPSON "
+            $newDev = @{ Port = $p; Model = $model }
+            break
+        }
+    }
+}
+
+if ($newDev) {
+    $port = $newDev.Port
+    if ($PrinterName -eq "EMAB Ticket") { $PrinterName = "$($newDev.Model) Ticket" }
+    Write-Host "Imprimante USB detectee sans pilote : $($newDev.Model) sur $port"
+    if (-not (Get-PrinterDriver -Name "Generic / Text Only" -ErrorAction SilentlyContinue)) {
+        Write-Host "Installation du pilote Windows 'Generic / Text Only'..."
+        Add-PrinterDriver -Name "Generic / Text Only"
+    }
+    if (Get-Printer -Name $PrinterName -ErrorAction SilentlyContinue) {
+        Remove-Printer -Name $PrinterName
+    }
+    Add-Printer -Name $PrinterName -DriverName "Generic / Text Only" -PortName $port
+    $chosen = $PrinterName
+    Write-Host "[OK] Imprimante '$PrinterName' installee sur $port."
+} elseif ($existing.Count -gt 0) {
     # Le pilote constructeur (ex. "EPSON TM-T20III Receipt") est prioritaire sur
     # une eventuelle installation generique precedente.
     $vendor = @($existing | Where-Object { $_ -ne $PrinterName })
