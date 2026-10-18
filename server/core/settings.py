@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -18,8 +19,21 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return val.strip().lower() in ("1", "true", "yes", "on")
 
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-insecure-key-change-me")
 DEBUG = _env_bool("DJANGO_DEBUG", default=True)
+
+# Une variable DJANGO_SECRET_KEY présente mais vide (cas d'un champ Render
+# laissé vide) vaut absence : en développement on retombe sur la clé de dev,
+# en production on refuse de démarrer avec un message explicite plutôt que
+# de servir un 500 sur toutes les pages.
+SECRET_KEY = (os.environ.get("DJANGO_SECRET_KEY") or "").strip()
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = "dev-insecure-key-change-me"
+    else:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY est vide ou absente. Sur Render : onglet Environment, "
+            "variable DJANGO_SECRET_KEY, bouton Generate, puis redéployer."
+        )
 
 # ALLOWED_HOSTS : liste séparée par des virgules ; Render fournit RENDER_EXTERNAL_HOSTNAME.
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
