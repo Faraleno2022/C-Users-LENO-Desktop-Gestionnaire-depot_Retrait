@@ -53,8 +53,5 @@ outputs/
 sync_config.json
 sync_config.applied.json
 
-# Local release snapshots
-.release-*/
-
-# Worktree de release (autre depot)
+# Dossiers de release locaux / worktree de release (autre depot)
 .release-*/

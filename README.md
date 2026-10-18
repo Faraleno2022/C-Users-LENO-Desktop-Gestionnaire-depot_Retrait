@@ -122,6 +122,15 @@ Deux moyens de configurer un poste **sans ouvrir l'application** :
 Redémarrez l'application après la configuration : la synchronisation
 automatique démarre dès que l'URL et le jeton sont valides.
 
+### Envoyer le projet sur GitHub en un clic
+
+**`SYNCHRONISER_GITHUB.bat`** (racine du projet) : double-cliquez pour
+enregistrer les modifications locales (commit), récupérer celles du dépôt
+(`pull --rebase`) puis tout envoyer sur
+`https://github.com/Faraleno2022/SKS_EMAB.git`. Le fichier règle lui-même le
+remote `origin` sur ce dépôt et se place sur la branche `main`. En cas de
+conflit, il s'arrête et indique quoi faire (`git rebase --abort` pour annuler).
+
 ### Lancer le serveur en local
 
 ```bash
