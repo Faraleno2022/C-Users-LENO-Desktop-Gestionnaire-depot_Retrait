@@ -110,9 +110,24 @@ TEMPLATES = [
 WSGI_APPLICATION = "core.wsgi.application"
 
 # Base de données : DATABASE_URL (Postgres en prod) sinon SQLite local.
+# Une variable présente mais vide (champ Render laissé vide) vaut absence.
+# En production, l'absence est une erreur explicite : sans elle, Django
+# utiliserait un SQLite dans le conteneur, effacé à chaque redéploiement.
+_database_url = (os.environ.get("DATABASE_URL") or "").strip()
+if not _database_url:
+    if DEBUG:
+        _database_url = f"sqlite:///{BASE_DIR / 'dev.sqlite3'}"
+    else:
+        raise ImproperlyConfigured(
+            "DATABASE_URL est vide ou absente. Sur Render : onglet Environment, "
+            "variable DATABASE_URL = Internal Database URL de la base PostgreSQL, "
+            "puis redéployer."
+        )
+# parse() plutôt que config() : ce dernier relirait la variable d'environnement
+# et préférerait sa valeur vide au repli calculé ci-dessus.
 DATABASES = {
-    "default": dj_database_url.config(
-        default=os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'dev.sqlite3'}"),
+    "default": dj_database_url.parse(
+        _database_url,
         conn_max_age=600,
         ssl_require=_env_bool("DJANGO_DB_SSL", default=False),
     )
