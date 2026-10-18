@@ -1,4 +1,4 @@
-' Demarrage automatique de la console web EMAB GROUP avec Windows.
+' Demarrage automatique de la console web EMAB-SKS avec Windows.
 '   1) Applique une mise a jour en attente, si presente (sans toucher aux donnees).
 '   2) Lance la console minimisee, sans ouvrir le navigateur.
 ' La replication vers le serveur en ligne demarre toute seule.

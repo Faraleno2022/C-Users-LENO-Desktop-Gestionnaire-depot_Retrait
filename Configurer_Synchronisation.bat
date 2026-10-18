@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  EMAB GROUP - Configurer la synchronisation en un clic
+rem  EMAB-SKS - Configurer la synchronisation en un clic
 rem  Double-cliquez sur ce fichier : une fenetre permet de saisir
 rem  l'URL du serveur, le jeton du poste et le nom du poste, de
 rem  tester la connexion et d'enregistrer la configuration.

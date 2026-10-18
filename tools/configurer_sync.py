@@ -270,7 +270,7 @@ def run_gui(db_path: Path, prefill: dict) -> int:
     from tkinter import filedialog, messagebox, ttk
 
     root = tk.Tk()
-    root.title("EMAB GROUP — Configurer la synchronisation")
+    root.title("EMAB-SKS — Configurer la synchronisation")
     root.resizable(False, False)
     try:
         ico = ROOT / "assets" / "logo_emab.ico"

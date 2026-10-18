@@ -276,7 +276,7 @@ def build_withdrawal_invoice(data: dict) -> bytes:
     story = []
 
     # En-tête société
-    story.append(Paragraph("<b>EMAB GROUP</b>", styles["Title"]))
+    story.append(Paragraph("<b>EMAB-SKS</b>", styles["Title"]))
     story.append(Paragraph("Facture de retrait / vente de produits", styles["Heading2"]))
     story.append(Spacer(1, 4 * mm))
 
@@ -343,7 +343,7 @@ def build_withdrawal_invoice(data: dict) -> bytes:
     ]))
     story.append(rt)
     story.append(Spacer(1, 12 * mm))
-    story.append(Paragraph("Merci de votre confiance — EMAB GROUP", styles["Italic"]))
+    story.append(Paragraph("Merci de votre confiance — EMAB-SKS", styles["Italic"]))
 
     doc.build(story)
     return buf.getvalue()

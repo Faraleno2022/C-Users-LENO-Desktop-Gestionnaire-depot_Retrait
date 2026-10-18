@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
         sb_layout.setSpacing(0)
 
         # Marque — identique à la console web (sidebar-brand)
-        header = QLabel("EMAB GROUP")
+        header = QLabel("EMAB-SKS")
         header.setStyleSheet(
             "color: white; padding: 18px 19px; font-weight: 700; font-size: 15px;"
             " background: #0b1220; border-bottom: 1px solid #1f2937;"

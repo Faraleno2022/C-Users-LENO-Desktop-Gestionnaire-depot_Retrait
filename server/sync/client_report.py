@@ -55,7 +55,7 @@ def build_client_pdf(title, headers, rows, subtitle=""):
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(colors.HexColor("#475569"))
-        canvas.drawString(15*mm, 10*mm, "EMAB GROUP - Clients et soldes")
+        canvas.drawString(15*mm, 10*mm, "EMAB-SKS - Clients et soldes")
         canvas.drawRightString(282*mm, 10*mm, f"Page {document.page}")
         canvas.restoreState()
 

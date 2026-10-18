@@ -1,4 +1,4 @@
-"""Logo EMAB GROUP (noir et blanc) embarque pour le ticket de caisse.
+"""Logo EMAB-SKS (noir et blanc) embarque pour le ticket de caisse.
 
 Genere depuis assets/ticket_logo.png. Data URI autonome : pas de fichier
 externe a servir, fonctionne en mode developpement comme en .exe."""

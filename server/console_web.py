@@ -1,4 +1,4 @@
-"""Console web EMAB GROUP en local (hors-ligne).
+"""Console web EMAB-SKS en local (hors-ligne).
 
 Lance le serveur Django sur la machine (par défaut http://127.0.0.1:8765),
 ouvre le navigateur, et stocke les données dans un dossier utilisateur
@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.34"
+APP_VERSION = "1.0.35"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -429,7 +429,7 @@ def main() -> int:
     from django.core.management import call_command
 
     print("=" * 62)
-    print("  EMAB GROUP — Console web locale")
+    print("  EMAB-SKS — Console web locale")
     print("=" * 62)
     print(f"Données : {data_dir}")
     print("Préparation de la base locale…")

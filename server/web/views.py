@@ -825,7 +825,7 @@ def print_ticket(request):
         "montant": montant,
         "solde_avant": solde_avant,
         "solde_apres": solde_apres,
-        "company_name": "EMAB GROUP",
+        "company_name": "EMAB-SKS",
         "logo_uri": logo,
     })
 

@@ -1,10 +1,10 @@
-; Installateur Windows — EMAB GROUP / Console web locale (hors-ligne)
+; Installateur Windows — EMAB-SKS / Console web locale (hors-ligne)
 ; Compiler : ISCC.exe installer_console_web.iss
 ; (nécessite server\dist\EMAB-Console-Web.exe, produit par PyInstaller)
 
 #define MyAppName "EMAB Console Web"
-#define MyAppPublisher "EMAB GROUP"
-#define MyAppVersion "1.0.34"
+#define MyAppPublisher "EMAB-SKS"
+#define MyAppVersion "1.0.35"
 #define MyAppExeName "EMAB-Console-Web.exe"
 
 [Setup]

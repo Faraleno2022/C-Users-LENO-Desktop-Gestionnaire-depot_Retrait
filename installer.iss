@@ -1,10 +1,10 @@
-; Installateur Windows — EMAB GROUP / Gestionnaire Dépôt-Retrait
+; Installateur Windows — EMAB-SKS / Gestionnaire Dépôt-Retrait
 ; Compiler : ISCC.exe installer.iss   (nécessite dist\EMAB-Gestionnaire.exe,
 ; produit par : python -m PyInstaller EMAB-Gestionnaire.spec)
 
 #define MyAppName "EMAB Gestionnaire"
-#define MyAppPublisher "EMAB GROUP"
-#define MyAppVersion "1.1.12"
+#define MyAppPublisher "EMAB-SKS"
+#define MyAppVersion "1.1.13"
 #define MyAppExeName "EMAB-Gestionnaire.exe"
 
 [Setup]
