@@ -63,8 +63,10 @@
       </div>
 
       <div class="text-muted small mb-3">
-        Enregistré par : <strong>{{ remote.nom_complet|default:remote.identifiant }}</strong>
-        ({{ remote.role }})
+        {# firstof et non |default:remote.identifiant : un argument de filtre absent #}
+        {# lève une erreur (500) quand le compte n'a pas de fiche poste en session. #}
+        Enregistré par : <strong>{% firstof remote.nom_complet remote.identifiant user.username %}</strong>
+        {% if remote.role %}({{ remote.role }}){% endif %}
       </div>
 
       <button type="submit" class="btn btn-success btn-lg">

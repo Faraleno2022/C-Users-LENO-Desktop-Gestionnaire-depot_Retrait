@@ -36,6 +36,17 @@ class PageTests(TestCase):
             with self.subTest(page=name):
                 self.assertEqual(self.client.get(reverse("web:" + name, args=[pk])).status_code, 200)
 
+    def test_deposit_page_for_account_without_post_identity(self):
+        # Compte Django créé sur le serveur (createsuperuser) : pas de
+        # remote_user en session. La page des dépôts répondait 500.
+        self.client.force_login(get_user_model().objects.create_superuser("render-admin", "", "x"))
+        session = self.client.session
+        session.pop("remote_user", None)
+        session.save()
+        response = self.client.get(reverse("web:deposit_new"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Enregistré par : <strong>render-admin</strong>", response.content.decode())
+
     def test_device_setup_script_download(self):
         from sync.models import Device
         device = Device.objects.create(name="Caisse n°1 & \"test\" é")
