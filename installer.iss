@@ -4,7 +4,7 @@
 
 #define MyAppName "EMAB Gestionnaire"
 #define MyAppPublisher "EMAB-SKS"
-#define MyAppVersion "1.1.15"
+#define MyAppVersion "1.1.16"
 #define MyAppExeName "EMAB-Gestionnaire.exe"
 
 [Setup]
@@ -31,6 +31,14 @@ Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 [Tasks]
 ; Coché par défaut : raccourci sur le bureau
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+
+[InstallDelete]
+; Purge le moteur PyInstaller de la version precedente AVANT la copie : sans
+; cela, les fichiers retires d'une version a l'autre restent dans _internal
+; (ex. numpy sans __init__.py laisse par 1.0.34 -> openpyxl plante et la console
+; renvoie « Server Error (500) »). Les donnees sont dans %LOCALAPPDATA%\EMAB GROUP,
+; jamais dans {app} : rien a perdre ici.
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
 ; Mode onedir : on installe le dossier complet (démarrage rapide, pas

@@ -38,6 +38,14 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; pour que la synchronisation soit toujours active sans intervention.
 Name: "startupicon"; Description: "Démarrer automatiquement avec Windows (synchronisation toujours active)"; GroupDescription: "Synchronisation :"
 
+[InstallDelete]
+; Purge le moteur PyInstaller de la version precedente AVANT la copie : sans
+; cela, les fichiers retires d'une version a l'autre restent dans _internal
+; (ex. numpy sans __init__.py laisse par 1.0.34 -> openpyxl plante et la console
+; renvoie « Server Error (500) »). Les donnees sont dans %LOCALAPPDATA%\EMAB GROUP,
+; jamais dans {app} : rien a perdre ici.
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 ; Mode onedir : on installe le dossier complet (démarrage rapide, pas
 ; d'auto-extraction à chaque lancement comme en onefile).
