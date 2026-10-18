@@ -67,9 +67,38 @@ def main() -> int:
     auto = settings_service.get_auto_sync_config()
     assert auto["enabled"] is False and auto["interval_seconds"] == 45, "ne doit pas changer"
 
+    # 3b. Réglages d'impression seuls (print_config.json) : la sync reste intacte.
+    ppath = tmp / "print_config.json"
+    ppath.write_text(json.dumps({"receipt_printer": "EMAB Ticket", "paper_width": "58 mm",
+                                 "auto_print": False}), encoding="utf-8")
+    assert sync_config_file.apply_sync_config_file_if_present([ppath]) == ppath
+    assert (tmp / "print_config.applied.json").exists()
+    pc = settings_service.get_print_config()
+    assert pc["printer"] == "EMAB Ticket" and pc["paper_width"] == "58", pc
+    assert pc["auto_print"] is False and pc["open_drawer"] is False
+    assert settings_service.get_sync_config()["device_token"] == "tok2", "sync inchangée"
+    # Clé partielle : seule la largeur change, l'imprimante est conservée.
+    ppath.write_text(json.dumps({"largeur": 80}), encoding="utf-8")
+    sync_config_file.apply_sync_config_file_if_present([ppath])
+    pc = settings_service.get_print_config()
+    assert pc["printer"] == "EMAB Ticket" and pc["paper_width"] == "80", pc
+    # Deux fichiers présents : les deux sont appliqués.
+    path.write_text(json.dumps({"server_url": "https://deux", "device_token": "tok4"}), encoding="utf-8")
+    ppath.write_text(json.dumps({"open_drawer": True}), encoding="utf-8")
+    assert sync_config_file.apply_sync_config_file_if_present([path, ppath]) == ppath
+    assert settings_service.get_sync_config()["device_token"] == "tok4"
+    assert settings_service.get_print_config()["open_drawer"] is True
+    # Les deux noms de fichiers sont cherchés dans chaque dossier candidat.
+    names = [p.name for p in sync_config_file.candidate_paths()]
+    assert "sync_config.json" in names and "print_config.json" in names, names
+    # Remet la sync attendue par la suite du test.
+    path.write_text(json.dumps({"url": "http://192.168.1.10:8000", "jeton": "tok2"}), encoding="utf-8")
+    sync_config_file.apply_sync_config_file_if_present([path])
+
     # 4. Fichiers invalides → erreur explicite, configuration intacte.
     for bad in ("{pas du json", json.dumps({"server_url": "https://x"}),
-                json.dumps({"server_url": "ftp://x", "device_token": "t"})):
+                json.dumps({"server_url": "ftp://x", "device_token": "t"}),
+                json.dumps({"paper_width": "A4"}), json.dumps({"autre": 1})):
         path.write_text(bad, encoding="utf-8")
         try:
             sync_config_file.apply_sync_config_file_if_present([path])

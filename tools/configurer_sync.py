@@ -159,7 +159,13 @@ def load_json_file(path: Path) -> dict:
         raise SyncConfigFileError(f"Lecture impossible de {path} : {exc}") from exc
     except ValueError as exc:
         raise SyncConfigFileError(f"JSON invalide dans {path} : {exc}") from exc
-    return parse_sync_config(data)
+    cfg = parse_sync_config(data)
+    if not cfg.get("has_sync", True):
+        raise SyncConfigFileError(
+            f"{path.name} ne contient pas de réglages de synchronisation "
+            "(server_url, device_token) ; il ne concerne que l'impression."
+        )
+    return cfg
 
 
 # --- Test de connexion -------------------------------------------------------

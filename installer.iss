@@ -4,7 +4,7 @@
 
 #define MyAppName "EMAB Gestionnaire"
 #define MyAppPublisher "EMAB-SKS"
-#define MyAppVersion "1.1.13"
+#define MyAppVersion "1.1.14"
 #define MyAppExeName "EMAB-Gestionnaire.exe"
 
 [Setup]
@@ -36,12 +36,16 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; Mode onedir : on installe le dossier complet (démarrage rapide, pas
 ; d'auto-extraction à chaque lancement comme en onefile).
 Source: "dist\EMAB-Gestionnaire\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Installation de l'imprimante à tickets en un clic (droits admin demandés au lancement)
+Source: "Installer_Imprimante_Ticket.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "installer_assets\Installer_Imprimante_Ticket.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 ; Raccourci bureau
 Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 ; Menu Démarrer
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{userprograms}\Installer l'imprimante à tickets"; Filename: "{app}\Installer_Imprimante_Ticket.cmd"; WorkingDir: "{app}"
 Name: "{userprograms}\Désinstaller {#MyAppName}"; Filename: "{uninstallexe}"
 
 [Run]

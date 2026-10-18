@@ -74,17 +74,42 @@ de ticket), dès la validation si l'option *Imprimer automatiquement* est active
 (c'est le cas par défaut). Sans imprimante à tickets, le bouton **Imprimer le
 reçu** ouvre la boîte de dialogue Windows classique.
 
-### Installer l'imprimante sur le poste
+### Installer l'imprimante en un clic
+
+Branchez l'imprimante en USB, allumez-la, puis double-cliquez sur
+**`Installer_Imprimante_Ticket.cmd`** (racine du projet, ou menu Démarrer →
+*Installer l'imprimante à tickets* après installation du Gestionnaire).
+Windows demande les droits administrateur, puis le script :
+
+1. détecte une imprimante à tickets déjà installée (pilote Epson
+   « Receipt », POS…) et la réutilise ;
+2. sinon installe l'imprimante USB sous le nom **EMAB Ticket** avec le pilote
+   Windows intégré *Generic / Text Only*, suffisant pour l'impression ESC/POS
+   directe du Gestionnaire (aucun téléchargement) ;
+3. écrit `print_config.json` dans le dossier de données de l'application
+   (imprimante, largeur 80 mm, impression automatique), appliqué au prochain
+   démarrage ;
+4. imprime un ticket de test ESC/POS.
+
+Options : `-PaperWidth 58`, `-PrinterName "Caisse 2"`, `-NoTest`.
+
+### Installation manuelle
 
 1. Installez le pilote Epson **Advanced Printer Driver (APD)** pour TM-T20III
    depuis le site Epson (support → TM-T20III → Pilotes). L'imprimante apparaît
-   dans Windows sous le nom **EPSON TM-T20III Receipt**.
+   dans Windows sous le nom **EPSON TM-T20III Receipt**. Ce pilote est
+   recommandé si la **console web locale** imprime aussi des tickets (rendu
+   HTML via Chrome), le pilote générique ne convenant qu'au Gestionnaire.
 2. Branchez l'imprimante (USB) et allumez-la. Imprimez une page de test depuis
    Windows (Paramètres → Imprimantes) pour vérifier le câblage.
 3. Dans l'application : **Administration → Impression des tickets**. Laissez
    *Automatique* (le pilote thermique est détecté) ou choisissez l'imprimante
    dans la liste, réglez la largeur (80 mm par défaut), puis **Imprimer un
    ticket test**. Si le ticket sort lisible et coupé, c'est terminé.
+
+Les réglages d'impression s'importent aussi par fichier : `print_config.json`
+(ou les mêmes clés dans `sync_config.json`) avec `receipt_printer`,
+`paper_width` (`"80"`/`"58"`), `auto_print`, `open_drawer`.
 
 La détection automatique reconnaît les pilotes dont le nom contient `Receipt`,
 `POS`, `Thermal`, `Ticket`, `EPSON TM`, `TM-T`, `XPrinter`, `Rongta`, `POZER`…
