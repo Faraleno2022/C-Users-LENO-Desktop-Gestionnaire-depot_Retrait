@@ -31,7 +31,7 @@ from pathlib import Path
 # Version de la console. À INCRÉMENTER à chaque nouvelle release publiée sur
 # GitHub (et reporter la même valeur dans MyAppVersion de installer_console_web.iss).
 # C'est ce numéro que l'updater compare à la dernière release pour décider d'une MAJ.
-APP_VERSION = "1.0.36"
+APP_VERSION = "1.0.37"
 
 PORT = int(os.environ.get("EMAB_WEB_PORT", "8765"))
 HOST = os.environ.get("EMAB_WEB_HOST", "127.0.0.1")
@@ -165,47 +165,20 @@ def _find_chrome() -> str:
     return shutil.which("chrome") or ""
 
 
-def _windows_printers() -> tuple[str, list[str]]:
-    """(imprimante Windows par défaut, liste des imprimantes installées).
-
-    Utilise l'API winspool via ctypes (aucune dépendance). En cas d'échec,
-    renvoie des valeurs vides : l'appelant se rabat sur le comportement actuel.
-    """
-    import ctypes
-    from ctypes import wintypes
-
-    default, names = "", []
+def _printers_module():
+    """Module web.printers (détection, ESC/POS), aussi importable depuis la
+    racine du dépôt (tests) : on ajoute alors le dossier server au chemin."""
     try:
-        winspool = ctypes.WinDLL("winspool.drv")
+        from web import printers
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from web import printers
+    return printers
 
-        n = wintypes.DWORD(0)
-        winspool.GetDefaultPrinterW(None, ctypes.byref(n))
-        if n.value:
-            buf = ctypes.create_unicode_buffer(n.value)
-            if winspool.GetDefaultPrinterW(buf, ctypes.byref(n)):
-                default = buf.value or ""
 
-        class PRINTER_INFO_4W(ctypes.Structure):
-            _fields_ = [
-                ("pPrinterName", wintypes.LPWSTR),
-                ("pServerName", wintypes.LPWSTR),
-                ("Attributes", wintypes.DWORD),
-            ]
-
-        PRINTER_ENUM_LOCAL, PRINTER_ENUM_CONNECTIONS = 2, 4
-        flags = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS
-        needed, count = wintypes.DWORD(0), wintypes.DWORD(0)
-        winspool.EnumPrintersW(flags, None, 4, None, 0,
-                               ctypes.byref(needed), ctypes.byref(count))
-        if needed.value:
-            raw = ctypes.create_string_buffer(needed.value)
-            if winspool.EnumPrintersW(flags, None, 4, raw, needed,
-                                      ctypes.byref(needed), ctypes.byref(count)):
-                arr = ctypes.cast(raw, ctypes.POINTER(PRINTER_INFO_4W * count.value)).contents
-                names = [p.pPrinterName for p in arr if p.pPrinterName]
-    except Exception:
-        pass
-    return default, names
+def _windows_printers() -> tuple[str, list[str]]:
+    """(imprimante Windows par défaut, liste des imprimantes installées)."""
+    return _printers_module().windows_printers()
 
 
 def _configured_printer() -> str:
@@ -230,51 +203,12 @@ def _pick_receipt_printer() -> str:
     explicite de l'utilisateur et cela évite de continuer à envoyer les tickets
     vers le pilote d'une ancienne imprimante thermique encore installé. Une
     imprimante bureautique par défaut ne prend toutefois pas la place d'une
-    caisse thermique détectée.
+    caisse thermique détectée. Un nom imposé (variable EMAB_RECEIPT_PRINTER, ou
+    réglage Administration → Impression des tickets) passe avant tout.
     """
-    virtual = ("pdf", "xps", "onenote", "fax", "anydesk", "send to")
-    # Même liste que app/utils/receipt_printer.py (application de bureau).
-    thermal = (
-        "pos", "thermal", "ticket", "receipt", "caisse", "58mm", "80mm",
-        "xprinter", "rongta", "pozer", "tp150",
-        "epson tm", "tm-t", "tm-m", "tm-u", "tm-p", "tm-l",
-    )
-
-    def is_virtual(name: str) -> bool:
-        low = name.lower()
-        return any(k in low for k in virtual)
-
-    def is_thermal(name: str) -> bool:
-        low = name.lower()
-        return any(k in low for k in thermal)
-
     default, names = _windows_printers()
-
-    # Une valeur explicite permet aussi aux installations multi-imprimantes de
-    # verrouiller la caisse sur un nom précis sans dépendre de l'ordre Windows :
-    # variable d'environnement, sinon réglage saisi dans la console
-    # (Administration → Impression des tickets, fichier printer_config.json).
     requested = os.environ.get("EMAB_RECEIPT_PRINTER", "").strip() or _configured_printer()
-    if requested:
-        for name in names:
-            if name.casefold() == requested.casefold() and not is_virtual(name):
-                return name
-
-    # 1) Le choix explicite de Windows passe avant les anciens pilotes thermiques
-    # encore installés. C'est notamment nécessaire après un remplacement.
-    if default and not is_virtual(default) and is_thermal(default):
-        return default
-    # 2) Sinon, recherche une imprimante à tickets connue.
-    for name in names:
-        if not is_virtual(name) and is_thermal(name):
-            return name
-    # 3) Sinon l'imprimante physique par défaut, puis la première disponible.
-    if default and not is_virtual(default):
-        return default
-    for name in names:
-        if not is_virtual(name):
-            return name
-    return ""
+    return _printers_module().pick_receipt_printer(default, names, requested, fallback=True)
 
 
 def _seed_kiosk_printer(profile_dir: str) -> None:

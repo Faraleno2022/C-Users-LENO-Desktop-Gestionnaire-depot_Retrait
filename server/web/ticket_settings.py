@@ -101,18 +101,13 @@ def list_local_printers() -> tuple[str, list[str]]:
     """(imprimante Windows par défaut, imprimantes installées) sur ce poste."""
     if not is_local_console():
         return "", []
-    try:
-        import console_web  # module du lanceur, présent sur la console locale
-        return console_web._windows_printers()
-    except Exception:
-        return "", []
+    from web import printers
+    return printers.windows_printers()
 
 
 def detected_local_printer() -> str:
+    """Imprimante à tickets qui recevra l'impression directe (ESC/POS), ou ''."""
     if not is_local_console():
         return ""
-    try:
-        import console_web
-        return console_web._pick_receipt_printer()
-    except Exception:
-        return ""
+    from web import printers
+    return printers.detect_ticket_printer(get_local_printer())

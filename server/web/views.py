@@ -792,23 +792,12 @@ def withdrawal_invoice(request):
     return resp
 
 
-@login_required(login_url="web:login")
-def print_ticket(request):
-    """Reçu au format ticket pour imprimante thermique de caisse (rouleau 58/80 mm).
+def _ticket_payload(request, kind: str):
+    """Données d'un ticket (dernier dépôt/retrait/vente en session, ou test).
 
-    Lit la dernière opération en session (dépôt ou retrait/vente) et l'affiche
-    en HTML optimisé pour l'impression sur rouleau. Le navigateur envoie le rendu
-    à l'imprimante thermique installée comme imprimante Windows.
+    Retourne None s'il n'y a rien à imprimer.
     """
-    from web.ticket_settings import get_ticket_settings
-    settings_cfg = get_ticket_settings()
-    kind = (request.GET.get("kind") or "retrait").strip()
-    requested_width = (request.GET.get("w") or "").strip()
-    width = requested_width if requested_width in ("80", "58") else settings_cfg["paper_width"]
-    auto = request.GET.get("auto") == "1"
-
     if kind == "test":
-        # Ticket de démonstration (Administration → Impression des tickets).
         data = {
             "id": 0, "matricule": "TEST-000", "telephone": "",
             "created_at": timezone.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -820,8 +809,7 @@ def print_ticket(request):
     else:
         data = request.session.get("last_withdrawal")
     if not data:
-        messages.warning(request, "Aucun reçu récent à imprimer.")
-        return redirect("web:deposit_new" if kind == "depot" else "web:withdrawal_new")
+        return None
 
     montant = float(data.get("montant") or 0)
     solde_apres = float(data.get("solde_apres") or 0)
@@ -835,6 +823,35 @@ def print_ticket(request):
         solde_avant = float(data.get("solde_avant", add(solde_apres, montant)))
         titre = "FACTURE DE VENTE" if data.get("is_sale") else "REÇU DE RETRAIT"
         signe = "−"
+    return {"r": data, "titre": titre, "signe": signe, "montant": montant,
+            "solde_avant": solde_avant, "solde_apres": solde_apres}
+
+
+def _ticket_width(request, settings_cfg: dict) -> str:
+    requested = (request.GET.get("w") or request.POST.get("w") or "").strip()
+    return requested if requested in ("80", "58") else settings_cfg["paper_width"]
+
+
+@login_required(login_url="web:login")
+def print_ticket(request):
+    """Reçu au format ticket pour imprimante thermique de caisse (rouleau 58/80 mm).
+
+    Lit la dernière opération en session (dépôt ou retrait/vente) et l'affiche
+    en HTML optimisé pour le rouleau. Sur la console locale équipée d'une
+    imprimante à tickets, le bouton Imprimer envoie le ticket en ESC/POS
+    directement au spouleur (voir print_ticket_escpos) ; ailleurs, ou en cas
+    d'échec, le navigateur imprime le rendu HTML.
+    """
+    from web import ticket_settings as ts
+    settings_cfg = ts.get_ticket_settings()
+    kind = (request.GET.get("kind") or "retrait").strip()
+    width = _ticket_width(request, settings_cfg)
+    auto = request.GET.get("auto") == "1"
+
+    payload = _ticket_payload(request, kind)
+    if payload is None:
+        messages.warning(request, "Aucun reçu récent à imprimer.")
+        return redirect("web:deposit_new" if kind == "depot" else "web:withdrawal_new")
 
     try:
         from web.ticket_logo import TICKET_LOGO_DATA_URI as logo
@@ -842,21 +859,73 @@ def print_ticket(request):
         logo = ""
 
     return render(request, "web/receipt_ticket.html", {
-        "r": data,
+        **payload,
         "kind": kind,
         "width": width,
         "auto": auto,
-        "titre": titre,
-        "signe": signe,
-        "montant": montant,
-        "solde_avant": solde_avant,
-        "solde_apres": solde_apres,
         "company_name": settings_cfg["company_name"],
         "company_address": settings_cfg["company_address"],
         "company_phone": settings_cfg["company_phone"],
         "ticket_footer": settings_cfg["ticket_footer"],
         "logo_uri": logo,
+        # Impression directe ESC/POS : console locale avec imprimante à tickets.
+        "escpos": bool(ts.detected_local_printer()),
     })
+
+
+@login_required(login_url="web:login")
+def print_ticket_escpos(request):
+    """Imprime le ticket en ESC/POS directement sur l'imprimante à tickets.
+
+    Réservé à la console locale (le serveur en ligne n'a pas accès à
+    l'imprimante du poste). Répond en JSON ; en cas d'échec, la page de
+    ticket retombe sur l'impression du navigateur.
+    """
+    from web import printers
+    from web import ticket_settings as ts
+    if request.method != "POST":
+        return JsonResponse({"ok": False, "error": "POST requis."}, status=405)
+    if not ts.is_local_console():
+        return JsonResponse({"ok": False, "error": "Impression directe indisponible sur le serveur en ligne."}, status=403)
+
+    cfg = ts.get_ticket_settings()
+    kind = (request.POST.get("kind") or "retrait").strip()
+    payload = _ticket_payload(request, kind)
+    if payload is None:
+        return JsonResponse({"ok": False, "error": "Aucun reçu récent à imprimer."}, status=404)
+
+    r = payload["r"]
+    money = lambda v: f"{float(v or 0):,.0f}".replace(",", " ") + " GNF"
+    lines = r.get("lines") or []
+    is_sale = bool(r.get("is_sale"))
+    if kind in ("depot", "test"):
+        action_label = "TEST" if kind == "test" else "DÉPÔT"
+    else:
+        action_label = "VENTE" if is_sale else "RETRAIT"
+    data = printers.build_ticket(
+        company={"name": cfg["company_name"], "address": cfg["company_address"],
+                 "phone": cfg["company_phone"]},
+        title=payload["titre"],
+        number=f"N° {r.get('id') or ''}".strip(),
+        date=str(r.get("created_at") or ""),
+        info_rows=[("Matricule", r.get("matricule") or ""),
+                   ("Tél.", r.get("telephone") or ""),
+                   ("Agent", r.get("agent_nom") or "")],
+        items=[{"name": l.get("product_nom"),
+                "detail": f"{l.get('quantite')} x {money(l.get('prix'))}",
+                "total": money(l.get("total"))} for l in lines],
+        balance_before=money(payload["solde_avant"]),
+        action_label=action_label,
+        action_value=f"{payload['signe']}{money(payload['montant'])}".replace("−", "-"),
+        balance_after=money(payload["solde_apres"]),
+        footer=[cfg["ticket_footer"], cfg["company_name"]],
+        paper_width=_ticket_width(request, cfg),
+    )
+    try:
+        used = printers.print_ticket_bytes(data, ts.get_local_printer())
+    except printers.PrintError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=502)
+    return JsonResponse({"ok": True, "printer": used})
 
 
 @login_required(login_url="web:login")

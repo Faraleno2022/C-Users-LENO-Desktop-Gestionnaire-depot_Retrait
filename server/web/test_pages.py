@@ -81,7 +81,8 @@ class PageTests(TestCase):
         self.assertIn("A bientot", body)
         self.assertIn("TICKET DE TEST", body)
         self.assertIn("--tw: 48mm", body)            # largeur 58 mm par défaut
-        self.assertIn("window.print()", body)       # auto=1
+        self.assertIn("emabPrint(true)", body)      # auto=1
+        self.assertIn("var ESCPOS = false", body)   # serveur en ligne : impression navigateur
         self.assertIn("--tw: 72mm", self.client.get(reverse("web:print_ticket"), {"kind": "test", "w": "80"}).content.decode())
         # Impression automatique : un dépôt validé ouvre le ticket dans un cadre, une seule fois.
         response = self.client.post(reverse("web:deposit_new"), {"matricule": "CLIENT", "montant": "1000"})

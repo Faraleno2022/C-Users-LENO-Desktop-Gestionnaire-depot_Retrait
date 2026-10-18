@@ -64,10 +64,11 @@
       <div class="col-12">
         <h2 class="h6 mb-1"><i class="bi bi-pc-display"></i> Imprimante de ce poste (console locale)</h2>
         <p class="small text-muted mb-2">
-          Imprimante Windows vers laquelle Chrome envoie les tickets sans boîte de
-          dialogue. « Automatique » retient le pilote thermique détecté
-          {% if detected %}(actuellement : <strong>{{ detected }}</strong>){% else %}(aucun détecté pour l'instant){% endif %}.
-          Un changement est pris en compte au prochain démarrage de la console.
+          Les tickets partent <strong>directement</strong> à l'imprimante à tickets (commandes ESC/POS),
+          sans boîte de dialogue ni pilote graphique : le papier est coupé automatiquement.
+          « Automatique » retient l'imprimante thermique détectée
+          {% if detected %}(actuellement : <strong>{{ detected }}</strong>){% else %}(aucune détectée pour l'instant : le ticket s'imprimera alors via Chrome, qui exige un pilote Epson complet){% endif %}.
+          Un nom choisi ici est utilisé tel quel.
         </p>
       </div>
       <div class="col-md-8">

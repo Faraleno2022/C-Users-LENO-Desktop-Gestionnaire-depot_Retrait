@@ -24,6 +24,7 @@ urlpatterns = [
     path("transactions/depot/", views.deposit_new, name="deposit_new"),
     path("transactions/retrait/", views.withdrawal_new, name="withdrawal_new"),
     path("recu/ticket/", views.print_ticket, name="print_ticket"),
+    path("recu/ticket/escpos/", views.print_ticket_escpos, name="print_ticket_escpos"),
     path("transactions/retrait/facture/", views.withdrawal_invoice, name="withdrawal_invoice"),
     path("api/solde/", views.matricule_balance_api, name="matricule_balance_api"),
     path("ventes/nouvelle/", views.sale_new, name="sale_new"),

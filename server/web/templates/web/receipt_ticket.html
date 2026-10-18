@@ -47,7 +47,8 @@
 </head>
 <body>
   <div class="toolbar">
-    <button class="print" onclick="window.print()">🖨️ Imprimer</button>
+    <button class="print" onclick="emabPrint(false)">🖨️ Imprimer</button>
+    <div id="emabStatus" style="margin-top:6px;font-size:12px;"></div>
     <a href="?kind={{ kind }}&w={% if width == '58' %}80{% else %}58{% endif %}{% if auto %}&auto=1{% endif %}">
       Passer en {% if width == "58" %}80 mm{% else %}58 mm{% endif %}
     </a>
@@ -96,13 +97,38 @@
     <div class="center muted" style="margin-top:6px;">. . .</div>
   </div>
 
-  {% if auto %}<script>
-    window.addEventListener('load', function () {
-      function closeSoon() { setTimeout(function () { try { window.close(); } catch (e) {} }, 500); }
+  <script>
+    // Console locale avec imprimante a tickets : envoi ESC/POS direct (aucun
+    // pilote graphique requis, papier coupe). Sinon, ou en cas d'echec, le
+    // navigateur imprime ce rendu HTML.
+    var ESCPOS = {% if escpos %}true{% else %}false{% endif %};
+    var ESCPOS_URL = "{% url 'web:print_ticket_escpos' %}";
+    function closeSoon() { setTimeout(function () { try { window.close(); } catch (e) {} }, 500); }
+    function say(text, ok) {
+      var el = document.getElementById('emabStatus');
+      if (el) { el.textContent = text; el.style.color = ok ? '#15803d' : '#b91c1c'; }
+    }
+    function browserPrint() {
       // En mode caisse (Chrome --kiosk-printing), l'impression est immediate.
       window.onafterprint = closeSoon;
-      setTimeout(function () { window.print(); closeSoon(); }, 250);
-    });
-  </script>{% endif %}
+      window.print();
+      closeSoon();
+    }
+    function emabPrint(auto) {
+      if (!ESCPOS) { browserPrint(); return; }
+      var body = new URLSearchParams({ kind: "{{ kind }}", w: "{{ width }}" });
+      fetch(ESCPOS_URL, {
+        method: "POST", credentials: "same-origin", body: body,
+        headers: { "X-CSRFToken": "{{ csrf_token }}", "X-Requested-With": "XMLHttpRequest" }
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.ok) { say("Ticket envoyé à « " + d.printer + " ».", true); if (auto) closeSoon(); }
+          else { say((d.error || "Envoi impossible") + " Impression par le navigateur…", false); browserPrint(); }
+        })
+        .catch(function () { say("Envoi impossible. Impression par le navigateur…", false); browserPrint(); });
+    }
+    {% if auto %}window.addEventListener('load', function () { setTimeout(function () { emabPrint(true); }, 250); });{% endif %}
+  </script>
 </body>
 </html>
