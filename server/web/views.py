@@ -2587,6 +2587,113 @@ def devices_list(request):
     })
 
 
+def _cmd_safe(value: str) -> str:
+    """Rend une valeur sûre pour un `set "X=..."` dans un fichier .cmd.
+
+    Les caractères spéciaux de cmd.exe et les guillemets sont remplacés par
+    des espaces ; les accents sont conservés par échappement JSON (\\uXXXX),
+    ce qui garde le fichier en ASCII pur, lisible par cmd quel que soit son
+    encodage.
+    """
+    cleaned = "".join(" " if ch in '"%!^&|<>()' else ch for ch in (value or ""))
+    cleaned = " ".join(cleaned.split())
+    # json.dumps(ensure_ascii) encadre de guillemets : on les retire.
+    return json.dumps(cleaned, ensure_ascii=True)[1:-1]
+
+
+def build_device_setup_script(server_url: str, device: "Device", generated_at: str) -> str:
+    """Fichier .cmd à double-cliquer sur le PC de caisse.
+
+    Il écrit `sync_config.json` dans le dossier de données de l'application
+    bureau (appliqué au démarrage, Gestionnaire ≥ 1.1.11) et, si la console
+    web locale est installée, son `render_sync.json`, puis lance l'application.
+    """
+    name = _cmd_safe(device.name)
+    lines = [
+        "@echo off",
+        f"rem EMAB-SKS - Configuration de la synchronisation du poste \"{name}\"",
+        f"rem Genere depuis {server_url}/postes/ le {generated_at}.",
+        "rem Double-cliquez sur ce fichier sur le PC de caisse : il configure",
+        "rem EMAB Gestionnaire (et la console web locale si elle est installee),",
+        "rem puis lance l'application. Ce fichier contient le jeton du poste :",
+        "rem ne le partagez pas et supprimez-le apres usage.",
+        "setlocal",
+        "title Configuration de la synchronisation EMAB-SKS",
+        f'set "SERVER={server_url}"',
+        f'set "TOKEN={device.token}"',
+        f'set "NAME={name}"',
+        'set "APPDIR=%LOCALAPPDATA%\\EMAB GROUP\\Gestionnaire"',
+        'set "CONSOLEDIR=%LOCALAPPDATA%\\EMAB GROUP\\ConsoleWeb"',
+        'set "EXE=%LOCALAPPDATA%\\Programs\\EMAB Gestionnaire\\EMAB-Gestionnaire.exe"',
+        "echo.",
+        f"echo  Poste   : {name}",
+        "echo  Serveur : %SERVER%",
+        "echo.",
+        'if not exist "%APPDIR%" mkdir "%APPDIR%"',
+        '> "%APPDIR%\\sync_config.json" (',
+        "  echo {",
+        '  echo   "server_url": "%SERVER%",',
+        '  echo   "device_token": "%TOKEN%",',
+        '  echo   "device_name": "%NAME%",',
+        '  echo   "auto_sync": true,',
+        '  echo   "auto_sync_interval_seconds": 15',
+        "  echo }",
+        ")",
+        'echo [OK] Application bureau : configuration ecrite dans "%APPDIR%\\sync_config.json"',
+        'if exist "%CONSOLEDIR%" (',
+        '  > "%CONSOLEDIR%\\render_sync.json" (',
+        "    echo {",
+        '    echo   "enabled": true,',
+        '    echo   "url": "%SERVER%",',
+        '    echo   "token": "%TOKEN%",',
+        '    echo   "interval_seconds": 15',
+        "    echo }",
+        "  )",
+        '  echo [OK] Console web locale : configuration ecrite dans "%CONSOLEDIR%\\render_sync.json"',
+        "  echo      Redemarrez la console web locale pour la prendre en compte.",
+        ")",
+        "echo.",
+        'tasklist /FI "IMAGENAME eq EMAB-Gestionnaire.exe" 2>nul | find /I "EMAB-Gestionnaire.exe" >nul',
+        "if not errorlevel 1 (",
+        "  echo L'application EMAB Gestionnaire est ouverte : fermez-la puis rouvrez-la",
+        "  echo pour appliquer la configuration.",
+        ') else if exist "%EXE%" (',
+        "  echo Lancement de EMAB Gestionnaire : la configuration est appliquee au demarrage.",
+        '  start "" "%EXE%"',
+        ") else (",
+        "  echo EMAB Gestionnaire n'est pas installe sur ce PC. Installez-le puis lancez-le :",
+        "  echo la configuration sera appliquee a son premier demarrage.",
+        ")",
+        "echo.",
+        "echo Version requise : Gestionnaire 1.1.11 ou plus recent.",
+        "pause",
+        "endlocal",
+    ]
+    return "\r\n".join(lines) + "\r\n"
+
+
+@login_required(login_url="web:login")
+@role_required("super_admin", "admin")
+def device_setup_script(request, pk):
+    """Télécharge le fichier .cmd de configuration du poste (jeton inclus)."""
+    device = get_object_or_404(Device, pk=pk)
+    if not device.active:
+        return HttpResponseForbidden("Poste désactivé : réactivez-le avant de générer son fichier.")
+    server_url = request.build_absolute_uri("/").rstrip("/")
+    script = build_device_setup_script(
+        server_url, device, timezone.now().strftime("%Y-%m-%d %H:%M"),
+    )
+    _log_audit(request, "device_setup_download", target_type="device",
+               target_id=str(device.id), details=device.name)
+    import re
+    import unicodedata
+    ascii_name = unicodedata.normalize("NFKD", device.name).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", ascii_name).strip("-") or "poste"
+    response = HttpResponse(script.encode("ascii", "replace"), content_type="application/octet-stream")
+    response["Content-Disposition"] = f'attachment; filename="Configurer-Sync-{slug}.cmd"'
+    return response
+
+
 @login_required(login_url="web:login")
 @role_required("super_admin", "admin")
 def users_list(request):

@@ -50,6 +50,7 @@ urlpatterns = [
     path("clients/<int:pk>/modifier/", views.client_edit, name="client_edit"),
     path("clients/<int:pk>/basculer/", views.client_toggle, name="client_toggle"),
     path("postes/", views.devices_list, name="devices"),
+    path("postes/<int:pk>/configurer.cmd", views.device_setup_script, name="device_setup_script"),
     path("utilisateurs/", views.users_list, name="users"),
     path("utilisateurs/nouveau/", views.user_new, name="user_new"),
     path("utilisateurs/<int:pk>/modifier/", views.user_edit, name="user_edit"),

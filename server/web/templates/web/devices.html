@@ -12,10 +12,12 @@
 <div class="alert alert-info small">
   <i class="bi bi-info-circle"></i>
   Chaque poste de caisse (ou console locale) qui se synchronise avec ce serveur
-  doit posséder son <strong>jeton</strong>. Créez un poste ci-dessous, puis copiez
-  son jeton dans la configuration de synchronisation du poste
-  (application bureau → Sauvegarde & Sync, ou fichier <code>render_sync.json</code>
-  de la console locale).
+  doit posséder son <strong>jeton</strong>. Créez un poste ci-dessous, puis
+  téléchargez son <strong>fichier .cmd</strong> : copié sur le PC de caisse et
+  double-cliqué, il configure l'application bureau (et la console locale si elle
+  est installée) sans rien saisir. Vous pouvez aussi copier le jeton à la main
+  dans Administration → Synchronisation de l'application bureau.
+  Le fichier .cmd contient le jeton : ne le partagez pas et supprimez-le après usage.
 </div>
 
 {# ---------- Création ---------- #}
@@ -74,6 +76,12 @@
               {% endif %}
             </td>
             <td class="text-end">
+              {% if d.active %}
+                <a class="btn btn-sm btn-primary me-1" href="{% url 'web:device_setup_script' d.id %}"
+                   title="Fichier à double-cliquer sur le PC de caisse pour configurer la synchronisation">
+                  <i class="bi bi-download"></i> Fichier .cmd
+                </a>
+              {% endif %}
               <form method="post" class="d-inline"
                     onsubmit="return confirm('{% if d.active %}Désactiver{% else %}Réactiver{% endif %} le poste « {{ d.name }} » ?{% if d.active %} Il ne pourra plus se synchroniser.{% endif %}');">
                 {% csrf_token %}

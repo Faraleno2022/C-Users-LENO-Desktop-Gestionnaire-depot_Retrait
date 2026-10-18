@@ -36,6 +36,24 @@ class PageTests(TestCase):
             with self.subTest(page=name):
                 self.assertEqual(self.client.get(reverse("web:" + name, args=[pk])).status_code, 200)
 
+    def test_device_setup_script_download(self):
+        from sync.models import Device
+        device = Device.objects.create(name="Caisse n°1 & \"test\" é")
+        response = self.client.get(reverse("web:device_setup_script", args=[device.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('filename="Configurer-Sync-Caisse-n1-test-e.cmd"', response["Content-Disposition"])
+        body = response.content.decode("ascii")  # fichier ASCII pur, lisible par cmd.exe
+        self.assertIn(f'set "TOKEN={device.token}"', body)
+        self.assertIn('set "SERVER=http://testserver"', body)
+        self.assertIn('set "NAME=Caisse n\\u00b01 test \\u00e9"', body)   # caractères cmd retirés
+        self.assertIn('"server_url": "%SERVER%"', body)
+        self.assertIn("render_sync.json", body)
+        self.assertTrue(body.endswith("\r\n"))
+        # Poste désactivé : pas de fichier.
+        device.active = False
+        device.save()
+        self.assertEqual(self.client.get(reverse("web:device_setup_script", args=[device.pk])).status_code, 403)
+
     def test_export_pages_return_valid_files(self):
         for page in ("transactions", "sales", "products", "stock_movements", "inventory"):
             for fmt in ("pdf", "xlsx"):
