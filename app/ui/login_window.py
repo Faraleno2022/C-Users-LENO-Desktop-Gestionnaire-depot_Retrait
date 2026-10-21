@@ -33,7 +33,7 @@ class LoginWindow(QDialog):
         layout.setContentsMargins(40, 40, 40, 40)
         layout.setSpacing(14)
 
-        # Logo EMAB-SKS — même présentation que la page de connexion web
+        # Logo EMAB GROUP — même présentation que la page de connexion web
         if LOGO_PATH.exists():
             logo = QLabel()
             pix = QPixmap(str(LOGO_PATH))
@@ -42,7 +42,7 @@ class LoginWindow(QDialog):
             logo.setAlignment(Qt.AlignCenter)
             layout.addWidget(logo)
         else:
-            title = QLabel("EMAB-SKS")
+            title = QLabel("EMAB GROUP")
             title.setAlignment(Qt.AlignCenter)
             title.setProperty("class", "h1")
             title.setFont(QFont("Segoe UI", 18, QFont.Bold))
